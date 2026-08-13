@@ -1,0 +1,8 @@
+# dsh-task-console bundle patch: mount the client-plugin row.
+#
+# Applied as a bundle layer — `dsh plugin --profile web add dsh-task-console`
+# reconciles this package into the profile's `dsh.profile.bundles` list
+# automatically, so no manual patch editing is needed after install.
+- insert:
+    - id: task-console
+      name: 'dsh-task-console'
