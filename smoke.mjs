@@ -24,7 +24,7 @@ globalThis.document = {
   head: { appendChild: (el) => styleTags.push(el) },
   createElement: () => ({ dataset: {}, textContent: "" }),
   querySelector: () => null,
-  body: { hasAttribute: () => false },
+  body: { hasAttribute: () => false, nodeType: 1 }, // nodeType satisfies createPortal's container check
 };
 globalThis.window = { innerWidth: 1600 };
 globalThis.localStorage = undefined; // exercise the "no storage" path
@@ -42,6 +42,8 @@ globalThis.window.__ModuleLoader__ = {
 const localRequire = (spec) => {
   if (spec === "react/jsx-runtime") return { jsx, jsxs, Fragment };
   if (spec === "react") return React;
+  // SSR has no real DOM: a portal falls back to rendering its children inline.
+  if (spec === "react-dom") return { createPortal: (children) => children };
   throw new Error("unexpected require: " + spec);
 };
 const moduleExports = capturedFactory(localRequire);
@@ -102,6 +104,8 @@ for (const [name, needle] of [
   ["jobs card", "后台任务"],
   ["subagents card", "子代理"],
   ["workspace card", "工作区"],
+  ["plugins card", "插件管理"],
+  ["plugins unavailable fallback", "插件管理服务不可用"],
   ["session title", "测试会话 · 重构文档"],
   ["cwd path", "D:\\projects\\demo"],
   ["live job row", "运行测试套件"],
@@ -109,6 +113,7 @@ for (const [name, needle] of [
   ["job duration ticks", "分"],
   ["subagent row", "研究助手"],
   ["reset button", "复位卡片"],
+  ["new card button", "新建卡片"],
   ["back button", "返回会话"],
 ]) check("panel: " + name, panelHtml.includes(needle));
 
@@ -128,6 +133,480 @@ check(
 check("duration formatting", tc.fmtTaskDuration(90000) === "1分30秒" && tc.fmtTaskDuration(3600_000) === "1小时0分");
 check("dot states", tc.taskJobDot("running") === "ongoing" && tc.taskJobDot("killed") === "warn" && tc.taskJobDot("failed") === "error");
 check("style injected", styleTags.length > 0 && styleTags[0].textContent.includes("dsh-tc-panel"));
+
+// ---- card chrome honors declarative style ----
+const styledCardHtml = renderToString(
+  jsx(tc.TaskCard, {
+    id: "u1",
+    title: "看板",
+    layout: { x: 10, y: 10, collapsed: false, hidden: false, pinned: false, style: { width: "wide", accent: "blue", density: "cozy", icon: "📊" } },
+    dragging: false,
+    zIndex: 1,
+    boardRef: { current: null },
+    actions: [],
+    onDragStart: () => {},
+    onDragMove: () => {},
+    onDragEnd: () => {},
+    children: null,
+  })
+);
+check(
+  "card chrome applies declarative style",
+  styledCardHtml.includes('data-width="wide"') &&
+    styledCardHtml.includes('data-acc="1"') &&
+    styledCardHtml.includes("📊") &&
+    styledCardHtml.includes("--dsh-tc-acc:#3b82f6")
+);
+
+// ---- declarative control blocks render ----
+const userCardHtml = renderToString(
+  jsx(tc.TaskUserBody, {
+    card: {
+      title: "示例",
+      blocks: [
+        { kind: "heading", text: "进度看板" },
+        { kind: "text", text: "第一行" },
+        { kind: "checklist", key: "todo", items: [{ id: "a", label: "跑测试" }] },
+        { kind: "counter", key: "cnt", label: "轮次", step: 1 },
+        { kind: "stats", items: [{ label: "通过", value: "9" }] },
+        { kind: "progress", label: "完成", value: 2, max: 3 },
+        { kind: "kv", rows: [["分支", "main"]] },
+        { kind: "links", items: [{ label: "DSH", url: "https://github.com/deepseek-ai/deepseek-harness" }] },
+        { kind: "chips", items: ["进行中"] },
+        { kind: "button", action: "copy", label: "复制", value: "v" },
+        { kind: "trend", label: "近 7 日", unit: "次", values: [3, 5, 2, 8, 6] },
+        { kind: "table", columns: ["阶段", "状态"], rows: [["构建", "通过"]] },
+        { kind: "code", language: "bash", text: "npm test" },
+        { kind: "toggle", key: "auto", label: "自动刷新", value: true },
+        { kind: "countdown", label: "距离发布", until: Date.now() + 3600_000 },
+        { kind: "bars", label: "占用", items: [{ label: "CPU", value: 42 }, { label: "内存", value: 68 }] },
+        { kind: "unknown", requested: "weird", raw: { note: "kept" } },
+      ],
+    },
+    onWidget: () => {},
+  })
+);
+check(
+  "user card control blocks render",
+  userCardHtml.includes("进度看板") &&
+    userCardHtml.includes("第一行") &&
+    userCardHtml.includes("跑测试") &&
+    userCardHtml.includes("轮次") &&
+    userCardHtml.includes("通过") &&
+    userCardHtml.includes("分支") &&
+    userCardHtml.includes("DSH") &&
+    userCardHtml.includes("进行中") &&
+    userCardHtml.includes("复制") &&
+    userCardHtml.includes("近 7 日") &&
+    userCardHtml.includes("dsh-tc-trendSvg") &&
+    userCardHtml.includes("dsh-tc-table") &&
+    userCardHtml.includes("构建") &&
+    userCardHtml.includes("npm test") &&
+    userCardHtml.includes("自动刷新") &&
+    userCardHtml.includes("dsh-tc-switch") &&
+    userCardHtml.includes("距离发布") &&
+    userCardHtml.includes("dsh-tc-countdownValue") &&
+    userCardHtml.includes("dsh-tc-barFill") &&
+    userCardHtml.includes("未支持的控件") &&
+    userCardHtml.includes("dsh-tc-check")
+);
+check(
+  "unsupported control keeps its raw payload",
+  userCardHtml.includes("weird") && userCardHtml.includes("dsh-tc-wRaw") && userCardHtml.includes("kept")
+);
+const countdownDoneHtml = renderToString(
+  jsx(tc.TaskBlockView, {
+    block: { kind: "countdown", label: "已过期", until: Date.now() - 1000, done: "已发布" },
+    scope: "c",
+    value: {},
+    onWidget: () => {},
+    onRun: () => {},
+    feedbackText: null,
+  })
+);
+check("countdown shows done text after deadline", countdownDoneHtml.includes("已发布"));
+
+// ---- card chat popup renders ----
+const chatHtml = renderToString(
+  jsx(tc.TaskCardChat, { card: { id: "usr-demo", title: "示例卡", blocks: [] }, onClose: () => {} })
+);
+check(
+  "card chat popup renders",
+  chatHtml.includes("对话重构") && chatHtml.includes("示例卡") && chatHtml.includes("发送")
+);
+
+// ---- chat-row kinds that may carry a [taskcard] block ----
+check(
+  "chat row kinds: user + settled assistant-step, never the turn-process row",
+  tc.isTaskChatTextKind("user") === true &&
+    tc.isTaskChatTextKind("assistant-step") === true &&
+    tc.isTaskChatTextKind("assistant") === true &&
+    tc.isTaskChatTextKind("turn-process") === false &&
+    tc.isTaskChatTextKind("tool-call") === false &&
+    tc.isTaskChatTextKind(null) === false
+);
+
+// ---- agent reply extraction (temporary-agent refactor pipeline) ----
+check(
+  "assistant text extraction joins text blocks",
+  tc.assistantTextOfBlocks([{ type: "text", text: "A" }, { type: "reasoning", text: "x" }, { type: "text", text: "B" }]) === "A\nB"
+);
+check(
+  "live chunk text extraction",
+  tc.assistantTextOfChunk({ type: "text-delta", text: "x" }) === "x" &&
+    tc.assistantTextOfChunk({ type: "finish" }) === "" &&
+    tc.assistantTextOfChunk(null) === ""
+);
+const eventSourceOf = (entries) => ({ getSnapshot: () => ({ entries }) });
+const durableEntry = (seq, text) => ({ type: "event", event: { type: "assistant/message", seq, data: { message: { content: [{ type: "text", text }] } } } });
+const liveEntry = (seq, text, index = 0) => ({ type: "transient", event: { type: "assistant/live-chunk", seq, data: { chunk: { type: "text-delta", index, text } } } });
+const liveEndEntry = (seq, text, index = 0) => ({ type: "transient", event: { type: "assistant/live-chunk", seq, data: { chunk: { type: "block-end", index, block: { type: "text", text } } } } });
+const turnEndEntry = (seq) => ({ type: "event", event: { type: "turn/end", seq, data: { turn: 1, reason: { kind: "completed" } } } });
+const turnStartEntry = (seq) => ({ type: "event", event: { type: "turn/start", seq, data: { turn: 1 } } });
+const inboxEntry = (seq, target, count) => ({ type: "event", event: { type: "agent/inbox/spliced", seq, data: { target, start: 0, inserted: Array.from({ length: count }, (_, index) => ({ id: "m" + String(index) })) } } });
+const userEntry = (seq, text) => ({ type: "event", event: { type: "user/message", seq, data: { role: "user", content: [{ type: "text", text }] } } });
+const inheritedEvents = [durableEntry(3, "inherited reply"), { type: "event", event: { type: "user/message", seq: 4, data: { content: [] } } }];
+check(
+  "event window reader respects the fork baseline",
+  tc.latestTaskEventSeq(eventSourceOf(inheritedEvents)) === 4 &&
+    tc.latestTaskAssistantText(eventSourceOf(inheritedEvents), 4) === "" &&
+    tc.latestTaskAssistantText(eventSourceOf(inheritedEvents), 3) === "" &&
+    tc.latestTaskAssistantText(eventSourceOf(inheritedEvents), 2) === "inherited reply" &&
+    tc.latestTaskAssistantText(eventSourceOf([]), -1) === ""
+);
+check(
+  "event window reader prefers the longer durable reply",
+  tc.latestTaskAssistantText(eventSourceOf([...inheritedEvents, liveEntry(6, "[taskcard] {"), durableEntry(9, '[taskcard] { "title": "T" } [/taskcard]')]), 4).includes('"title": "T"')
+);
+check(
+  "event window reader streams live text before settlement",
+  tc.latestTaskAssistantText(eventSourceOf([...inheritedEvents, liveEntry(6, "正在"), liveEntry(7, "重构…")]), 4) === "正在重构…"
+);
+check(
+  "event window reader replaces a streamed block with its block-end text",
+  tc.latestTaskAssistantText(eventSourceOf([...inheritedEvents, liveEntry(6, "partial"), liveEndEntry(7, "完整文本")]), 4) === "完整文本" &&
+    tc.latestTaskAssistantText(eventSourceOf([liveEntry(1, "A", 0), liveEntry(2, "B", 1)]), -1) === "A\nB"
+);
+
+// ---- temporary-agent bridge: blank temporary session first (no fork) ----
+const tempEntries = [];
+const tempEvents = eventSourceOf(tempEntries);
+const tempSession = {
+  open: async () => { openedTemp = true; },
+  getSnapshot: () => ({ running: true }),
+  prompt: async (content) => {
+    promptedText = content[0].text;
+    tempEntries.push(userEntry(11, "【任务台卡片重构】卡片 id：usr-bridge"));
+    tempEntries.push(durableEntry(12, '[taskcard] { "id": "usr-bridge", "title": "桥接卡", "blocks": [{ "kind": "heading", "text": "桥接" }] } [/taskcard]'));
+    return { ok: true, value: { accepted: true } };
+  },
+};
+let openedTemp = false;
+let promptedText = "";
+let archivedTemp = null;
+let createdWith = null;
+let forkAttempted = false;
+const noTurnCtx = {
+  get(name) {
+    if (name === "sessions") {
+      return {
+        list: { getSnapshot: () => ({ current: "s1", byId: { s1: { cwd: "D:\\demo" } } }) },
+        fork: async () => { forkAttempted = true; throw new Error("session/fork-unavailable: session has no completed turn to fork from"); },
+        create: async (opts) => { createdWith = opts; return "session-temp-1"; },
+        binding: (id) => (id === "session-temp-1" ? { sessionId: id, eventSource: tempEvents, session: tempSession } : undefined),
+      };
+    }
+    // A registered workspace owning the source cwd is the create target.
+    if (name === "workspaces") return {
+      list: { getSnapshot: () => ({ items: [{ id: "ws-demo", path: "D:\\demo" }] }) },
+      archiveSession: async (id) => { archivedTemp = id; },
+    };
+    return undefined;
+  },
+};
+const noTurnPhases = [];
+const noTurnResult = await tc.createTaskCardAgentBridge(noTurnCtx)(
+  { id: "usr-bridge", title: "旧标题", blocks: [], instruction: "重构成一张小卡" },
+  (event) => noTurnPhases.push(event)
+);
+check(
+  "temp-agent bridge: blank session first (workspace target, no fork), open, prompt, apply, archive",
+  noTurnResult.ok === true &&
+    forkAttempted === false &&
+    createdWith !== null && createdWith.workspaceId === "ws-demo" && createdWith.cwd === undefined &&
+    openedTemp === true &&
+    promptedText.includes("【任务台卡片重构】") && promptedText.includes("usr-bridge") && promptedText.includes("重构成一张小卡") &&
+    noTurnPhases.some((event) => event.phase === "started" && event.mode === "create") &&
+    noTurnPhases.some((event) => event.phase === "assistant" && event.text.includes("桥接卡")) &&
+    noTurnPhases.some((event) => event.phase === "applied" && event.id === "usr-bridge") &&
+    archivedTemp === "session-temp-1"
+);
+
+// ---- temporary-agent bridge: fork fallback (create unavailable) ignores inherited history ----
+const forkEntries = [durableEntry(3, '[taskcard] { "id": "usr-bridge", "title": "继承的旧卡" } [/taskcard]'), durableEntry(4, "inherited reply")];
+const forkEvents = eventSourceOf(forkEntries);
+let forked = false;
+let forkOpts = null;
+const forkCtx = {
+  get(name) {
+    if (name === "sessions") {
+      return {
+        list: { getSnapshot: () => ({ current: "s1", byId: {} }) },
+        fork: async (opts) => { forked = true; forkOpts = opts; return "session-fork-1"; },
+        create: async () => { throw new Error("session/create-unavailable"); },
+        binding: (id) => (id === "session-fork-1" ? {
+          sessionId: id,
+          eventSource: forkEvents,
+          session: {
+            open: async () => {},
+            getSnapshot: () => ({ running: false }),
+            prompt: async () => {
+              forkEntries.push(userEntry(19, "【任务台卡片重构】卡片 id：usr-bridge"));
+              forkEntries.push(durableEntry(20, '[taskcard] { "id": "usr-bridge", "title": "派生结果卡", "blocks": [{ "kind": "text", "text": "新" }] } [/taskcard]'));
+              return { ok: true, value: { accepted: true } };
+            },
+          },
+        } : undefined),
+      };
+    }
+    if (name === "workspaces") return { archiveSession: async () => {} };
+    return undefined;
+  },
+};
+const forkTexts = [];
+const forkPhases = [];
+const forkResult = await tc.createTaskCardAgentBridge(forkCtx)(
+  { id: "usr-bridge", title: "旧标题", blocks: [], instruction: "重构成派生结果卡" },
+  (event) => { forkPhases.push(event); if (event.phase === "assistant") forkTexts.push(event.text); }
+);
+check(
+  "temp-agent bridge: fork fallback reads only its own reply",
+  forkResult.ok === true &&
+    forked === true &&
+    forkOpts !== null && forkOpts.sessionId === "s1" && forkOpts.atSeq === undefined &&
+    forkPhases.some((event) => event.phase === "started" && event.mode === "fork" && event.note !== undefined) &&
+    forkTexts.length > 0 &&
+    forkTexts.some((text) => text.includes("派生结果卡")) &&
+    forkTexts.every((text) => text.includes("继承的旧卡") === false)
+);
+
+// ---- seeded-tail classifier: inherited pending work ----
+check(
+  "seed tail classifier: unconsumed inbox insert or open turn is pending work",
+  tc.taskSeedCarriesPendingWork([durableEntry(1, "x"), turnEndEntry(2)]) === false &&
+    tc.taskSeedCarriesPendingWork([durableEntry(1, "x"), inboxEntry(2, "next-turn", 1)]) === true &&
+    tc.taskSeedCarriesPendingWork([durableEntry(1, "x"), turnEndEntry(2), turnStartEntry(3)]) === true &&
+    tc.taskSeedCarriesPendingWork([inboxEntry(1, "next-step", 1), turnEndEntry(2)]) === false &&
+    tc.taskSeedCarriesPendingWork([]) === false
+);
+
+// ---- temporary-agent bridge: fork fallback seeded with the source's queued message ----
+const staleEntries = [inboxEntry(2, "next-turn", 1)];
+let staleSnapshot = { running: true, queue: [{ id: "q1", placement: "queued" }] };
+const staleRemoved = [];
+let staleCancelled = false;
+let stalePrompted = false;
+const staleArchived = [];
+const staleCtx = {
+  get(name) {
+    if (name === "sessions") {
+      return {
+        list: { getSnapshot: () => ({ current: "s1", byId: { s1: { cwd: "D:\\demo" } } }) },
+        fork: async () => "session-stale-1",
+        create: async () => { throw new Error("session/create-unavailable"); },
+        binding: (id) => (id === "session-stale-1" ? {
+          sessionId: id,
+          eventSource: eventSourceOf(staleEntries),
+          session: {
+            open: async () => {},
+            getSnapshot: () => staleSnapshot,
+            updateQueue: async (itemId, action) => {
+              staleRemoved.push([itemId, action && action.kind]);
+              staleSnapshot = { running: staleSnapshot.running, queue: [] };
+              return { ok: true, value: { accepted: true } };
+            },
+            cancel: async () => {
+              staleCancelled = true;
+              staleSnapshot = { running: false, queue: [] };
+              return { ok: true, value: { accepted: true } };
+            },
+            prompt: async () => {
+              stalePrompted = true;
+              staleEntries.push(userEntry(11, "【任务台卡片重构】卡片 id：usr-bridge"));
+              staleEntries.push(durableEntry(12, '[taskcard] { "id": "usr-bridge", "title": "清理后结果卡", "blocks": [{ "kind": "heading", "text": "新" }] } [/taskcard]'));
+              return { ok: true, value: { accepted: true } };
+            },
+          },
+        } : undefined),
+      };
+    }
+    if (name === "workspaces") return { archiveSession: async (id) => { staleArchived.push(id); } };
+    return undefined;
+  },
+};
+const stalePhases = [];
+const staleResult = await tc.createTaskCardAgentBridge(staleCtx)(
+  { id: "usr-bridge", title: "旧标题", blocks: [], instruction: "重构成清理后结果卡" },
+  (event) => stalePhases.push(event)
+);
+check(
+  "temp-agent bridge: fork fallback purges inherited queue + stops stale turn, then applies",
+  staleResult.ok === true &&
+    staleCancelled === true &&
+    staleRemoved.length === 1 && staleRemoved[0][0] === "q1" && staleRemoved[0][1] === "remove" &&
+    stalePrompted === true &&
+    stalePhases.some((event) => event.phase === "started" && typeof event.note === "string" && event.note.includes("排队消息")) &&
+    stalePhases.some((event) => event.phase === "applied" && event.id === "usr-bridge") &&
+    staleArchived.includes("session-stale-1")
+);
+
+// ---- temporary-agent bridge: child answers inherited work → main-session fallback ----
+const foreignEntries = [durableEntry(2, "inherited reply"), turnEndEntry(3)];
+let foreignArchived = null;
+const foreignCtx = {
+  get(name) {
+    if (name === "sessions") {
+      return {
+        list: { getSnapshot: () => ({ current: "s1", byId: {} }) },
+        fork: async () => "session-foreign-1",
+        create: async () => { throw new Error("session/create-unavailable"); },
+        binding: (id) => (id === "session-foreign-1" ? {
+          sessionId: id,
+          eventSource: eventSourceOf(foreignEntries),
+          session: {
+            open: async () => {},
+            getSnapshot: () => ({ running: true }),
+            prompt: async () => {
+              foreignEntries.push(turnStartEntry(5));
+              foreignEntries.push(durableEntry(6, "我先回答源会话遗留的那条消息"));
+              return { ok: true, value: { accepted: true } };
+            },
+          },
+        } : undefined),
+      };
+    }
+    if (name === "workspaces") return { archiveSession: async (id) => { foreignArchived = id; } };
+    return undefined;
+  },
+};
+const foreignResult = await tc.createTaskCardAgentBridge(foreignCtx)(
+  { id: "usr-bridge", title: "旧标题", blocks: [], instruction: "重构成趋势卡" },
+  () => {}
+);
+check(
+  "temp-agent bridge: reply without our own prompt → fast main-session fallback",
+  foreignResult.ok !== true &&
+    foreignResult.fallback === true &&
+    foreignArchived === "session-foreign-1" &&
+    typeof foreignResult.message === "string" && foreignResult.message.includes("主会话")
+);
+
+// ---- [taskcard] spec protocol ----
+const specUp = tc.parseTaskCardSpec('[taskcard] { "title": "路线图", "body": "第一行\\n第二行", "buttons": [{ "label": "复制", "action": "copy", "value": "x" }] } [/taskcard]');
+check(
+  "spec parse upsert (legacy body/buttons map to blocks)",
+  specUp !== null &&
+    specUp.op === "upsert" &&
+    specUp.title === "路线图" &&
+    specUp.blocks.length === 2 &&
+    specUp.blocks[0].kind === "text" &&
+    specUp.blocks[0].text === "第一行\n第二行" &&
+    specUp.blocks[1].kind === "button" &&
+    specUp.blocks[1].action === "copy" &&
+    specUp.blocks[1].value === "x"
+);
+const specBlocks = tc.parseTaskCardSpec('[taskcard] { "title": "看板", "blocks": [' +
+  '{ "kind": "heading", "text": "进度" },' +
+  '{ "kind": "checklist", "key": "todo", "items": [{ "id": "a", "label": "A" }, { "id": "b", "label": "B" }] },' +
+  '{ "kind": "counter", "key": "cnt", "label": "轮次", "step": 1 },' +
+  '{ "kind": "progress", "label": "完成", "value": 3, "max": 10 },' +
+  '{ "kind": "unknownish", "anything": true }' +
+  '] } [/taskcard]');
+check(
+  "spec parse control blocks",
+  specBlocks !== null &&
+    specBlocks.blocks.length === 5 &&
+    specBlocks.blocks[0].kind === "heading" &&
+    specBlocks.blocks[1].kind === "checklist" &&
+    specBlocks.blocks[1].items.length === 2 &&
+    specBlocks.blocks[2].kind === "counter" &&
+    specBlocks.blocks[3].kind === "progress" &&
+    specBlocks.blocks[4].kind === "unknown"
+);
+const specStyle = tc.parseTaskCardSpec('[taskcard] { "title": "看板", "style": { "accent": "blue", "width": "wide", "density": "cozy", "icon": "📊", "bad": "x" }, "blocks": [{ "kind": "text", "text": "hi" }] } [/taskcard]');
+check(
+  "spec style parse allowlist",
+  specStyle !== null &&
+    specStyle.style !== void 0 &&
+    specStyle.style.accent === "blue" &&
+    specStyle.style.width === "wide" &&
+    specStyle.style.density === "cozy" &&
+    specStyle.style.icon === "📊" &&
+    Object.hasOwn(specStyle.style, "bad") === false
+);
+const specStyleBad = tc.parseTaskCardSpec('[taskcard] { "title": "卡", "style": { "accent": "nope", "width": "huge" } } [/taskcard]');
+check("spec style drops invalid values", specStyleBad !== null && specStyleBad.style === void 0);
+const specTrend = tc.parseTaskCardSpec('[taskcard] { "title": "看板", "blocks": [{ "kind": "trend", "label": "访问量", "unit": "次", "values": [3, 5, 2, 8, 6, 9] }, { "kind": "trend", "values": [1] }] } [/taskcard]');
+check(
+  "spec trend parse (>=2 points kept, single point dropped)",
+  specTrend !== null &&
+    specTrend.blocks.length === 1 &&
+    specTrend.blocks[0].kind === "trend" &&
+    specTrend.blocks[0].items.length === 6 &&
+    specTrend.blocks[0].items[5].value === 9
+);
+const specDel = tc.parseTaskCardSpec('[taskcard] { "op": "delete", "title": "路线图" } [/taskcard]');
+check("spec parse delete", specDel !== null && specDel.op === "delete" && specDel.title === "路线图");
+const specNewKinds = tc.parseTaskCardSpec('[taskcard] { "title": "混合", "blocks": [' +
+  '{ "kind": "table", "columns": ["A", "B"], "rows": [["1", "2"], ["3"]] },' +
+  '{ "kind": "code", "language": "ts", "text": "const a = 1;" },' +
+  '{ "kind": "toggle", "key": "sw", "label": "开关" },' +
+  '{ "kind": "countdown", "label": "截止", "until": "2030-01-01T00:00:00Z" },' +
+  '{ "kind": "bars", "items": [{ "label": "x", "value": 3 }] },' +
+  '{ "kind": "table" }' +
+  '] } [/taskcard]');
+check(
+  "spec parse new control kinds (table/code/toggle/countdown/bars; invalid dropped)",
+  specNewKinds !== null &&
+    specNewKinds.blocks.length === 5 &&
+    specNewKinds.blocks[0].kind === "table" &&
+    specNewKinds.blocks[0].columns.length === 2 &&
+    specNewKinds.blocks[0].rows[1].length === 2 &&
+    specNewKinds.blocks[1].kind === "code" &&
+    specNewKinds.blocks[1].language === "ts" &&
+    specNewKinds.blocks[2].kind === "toggle" &&
+    specNewKinds.blocks[2].value === false &&
+    specNewKinds.blocks[3].kind === "countdown" &&
+    typeof specNewKinds.blocks[3].until === "number" &&
+    specNewKinds.blocks[4].kind === "bars" &&
+    specNewKinds.blocks[4].items.length === 1
+);
+const specKvAlias = tc.parseTaskCardSpec('[taskcard] { "title": "键值", "blocks": [' +
+  '{ "kind": "kv", "items": [{ "key": "分支", "value": "main" }, { "label": "版本", "value": "0.8.2" }] },' +
+  '{ "kind": "kv", "rows": [["A", "1"]] },' +
+  '{ "kind": "kv", "items": [] }' +
+  '] } [/taskcard]');
+check(
+  "spec kv accepts rows and the items alias (empty kv dropped)",
+  specKvAlias !== null &&
+    specKvAlias.blocks.length === 2 &&
+    specKvAlias.blocks[0].rows.length === 2 &&
+    specKvAlias.blocks[0].rows[0][0] === "分支" &&
+    specKvAlias.blocks[0].rows[1][1] === "0.8.2" &&
+    specKvAlias.blocks[1].rows[0][1] === "1"
+);
+const specFence = tc.parseTaskCardSpec('~~~ preamble\n```taskcard\n{ "op": "upsert", "title": "T" }\n```\n');
+check("spec parse fenced", specFence !== null && specFence.op === "upsert" && specFence.title === "T");
+check("spec parse rejects plain text", tc.parseTaskCardSpec("ordinary message without markers") === null);
+check("button validation drops empty value", tc.sanitizeTaskButton({ label: "x", action: "copy", value: "  " }) === null);
+check("button validation keeps fill", tc.sanitizeTaskButton({ label: "", action: "fill", value: "hi" }) !== null && tc.sanitizeTaskButton({ action: "fill", value: "hi" }).action === "fill");
+check("builtin id list", tc.builtinTaskCardIds().length >= 4 && tc.builtinTaskCardIds().includes("session"));
+const created = tc.applyTaskCardSpec({ op: "upsert", title: "测试卡", blocks: [{ kind: "text", text: "内容" }] });
+check("apply upsert creates user card", created.ok && created.created === true && created.id.startsWith("usr-"));
+const updated = tc.applyTaskCardSpec({ op: "upsert", title: "测试卡", blocks: [{ kind: "checklist", key: "todo", items: [{ id: "a", label: "A" }] }] });
+check("apply upsert by title updates", updated.ok && updated.created === false);
+const removed = tc.applyTaskCardSpec({ op: "delete", title: "测试卡" });
+check("apply delete by title", removed.ok && removed.op === "delete");
 
 console.log(failed === 0 ? "ALL PASS" : `${failed} FAILURES`);
 process.exit(failed === 0 ? 0 : 1);

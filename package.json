@@ -1,7 +1,7 @@
 {
   "name": "dsh-task-console",
-  "version": "0.1.0",
-  "description": "DSH client plugin — flip to the back of the page for a floating glass task console: live background jobs, subagents, session overview and workspace of the current session, with mouse-draggable cards.",
+  "version": "0.8.2",
+  "description": "DSH client plugin — flip to the back of the page for a floating glass task console: live background jobs, subagents, session overview and workspace of the current session, with mouse-draggable cards; the top-right card conversation calls a temporary agent session to refactor each card's style and internal controls from natural language, and any conversation can author cards via [taskcard] blocks (text/heading/note/stats/progress/trend/kv/links/chips/checklist/counter/button/table/code/toggle/countdown/bars).",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -40,7 +40,7 @@
     },
     "client": {
       "platform": "web",
-      "inject": ["slots"]
+      "inject": ["slots", "remote", "remote.dynamicCordisRunner"]
     }
   },
   "peerDependencies": {
