@@ -1,5 +1,7 @@
 # dsh-task-console
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) client plugin: a floating glass **task console** for the current session. Click the glass button in the bottom-right corner and the page "flips" to its back — a frosted-glass board with mouse-draggable cards showing live background jobs, subagents, a session overview and the workspace.
 
 一个 DeepSeek Harness (DSH) 客户端插件：为当前会话提供悬浮毛玻璃「任务控制台」。点击右下角的玻璃按钮，页面翻到背面 —— 一块毛玻璃面板上悬浮着可鼠标拖拽的卡片，实时展示后台任务、子代理、会话概览与工作区。
@@ -151,9 +153,14 @@ A **user card** is authored by any conversation message: the board watches the c
 No build step — `lib/client.js` is both source and shipped bundle (ModuleLoader format, zero dependencies beyond React).
 
 ```bash
-npm i        # react + react-dom for the smoke test
-npm test     # smoke.mjs: SSR-renders the components with fixture state
+npm i          # react + react-dom for the smoke test
+npm run check  # syntax-check the shipped bundle
+npm test       # smoke.mjs: SSR-renders the components with fixture state
 ```
+
+## Changelog / 变更记录
+
+Release history: [CHANGELOG.md](./CHANGELOG.md)（版本历史见 [CHANGELOG.md](./CHANGELOG.md)）。
 
 ## License / 许可证
 

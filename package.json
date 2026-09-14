@@ -14,16 +14,23 @@
     "lib",
     "cordis.patch.yml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "keywords": [
     "dsh",
     "dsh-plugin",
     "client-plugin",
+    "deepseek-harness",
     "task-console",
+    "task-board",
     "glassmorphism",
     "background-jobs",
-    "subagents"
+    "subagents",
+    "cards",
+    "agent",
+    "taskcard",
+    "trend"
   ],
   "license": "MIT",
   "repository": {
@@ -50,7 +57,11 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
+    "check": "node --check lib/client.js",
     "test": "node smoke.mjs"
   }
 }
