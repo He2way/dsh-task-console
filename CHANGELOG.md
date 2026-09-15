@@ -4,6 +4,16 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.9.2
+
+- Root-caused the remaining drag stutter to **compositing, not React**: every card carried `backdrop-filter: blur(18px)` and sampled the whole page (including the rotated app behind the board), so each pointer frame re-blurred the board. Fixes:
+  - the board panel now forms its own backdrop root (`contain: paint`), so card blur only samples the board surface;
+  - once the flip settles the rotated front face is culled with `visibility: hidden` + `content-visibility: hidden`, freeing its compositor layers and layout;
+  - while a gesture runs, **all** cards drop their `backdrop-filter` and go opaque (restored on release), and the dragged card keeps `will-change: transform`;
+  - card bodies are memoized, so session streaming / commit re-renders no longer rebuild every card's control tree;
+  - new **⚡ 低特效** board-header toggle (persisted in `localStorage`) disables card glass blur, the panel's ambient animations and the card entrance animation for low-power machines.
+- 继续修复拖拽卡顿，根因改判为**合成开销**而非 React：每张卡片的 `backdrop-filter` 会重采样整页（含翻到背面、仍被渲染的整个 App）。修复：看板面板加 `contain:paint` 自成 backdrop root；翻面结算后把正面用 `visibility/content-visibility:hidden` 摘出合成与布局；手势期间**所有**卡片临时关闭毛玻璃并改为不透明（松手恢复），拖拽卡片保留 `will-change`；卡片内容组件 memo 化，流式/提交引起的重渲染不再重建每张卡；新增看板头部 **⚡ 低特效** 开关（持久化），一次性关掉卡片毛玻璃、环境动画与入场动画。
+
 ## v0.9.1
 
 - Fixed card drag/resize jank. Gestures no longer write React state per `pointermove`: the card moves on the compositor (`transform`) or resizes through inline width/height inside a `requestAnimationFrame`, board metrics are read once per gesture, and the board commits state + `localStorage` exactly once on release. `transition` is suspended on the busy card so the movement never lags behind the pointer, `will-change`/layout containment are applied, and the ambient board animation pauses for the duration.
