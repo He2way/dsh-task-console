@@ -158,6 +158,38 @@ check(
     styledCardHtml.includes("--dsh-tc-acc:#3b82f6")
 );
 
+// ---- mouse-resizable cards ----
+const cardProps = (layout) => ({
+  id: "u2",
+  title: "尺寸卡片",
+  layout,
+  dragging: false,
+  zIndex: 1,
+  boardRef: { current: null },
+  actions: [],
+  onDragStart: () => {},
+  onDragMove: () => {},
+  onDragEnd: () => {},
+  onResizeStart: () => {},
+  onResizeMove: () => {},
+  onResizeEnd: () => {},
+  children: null,
+});
+const sizedCardHtml = renderToString(jsx(tc.TaskCard, cardProps({ x: 10, y: 10, collapsed: false, hidden: false, pinned: false, w: 420, h: 300 })));
+check(
+  "sized card carries width/height and the resize handle",
+  sizedCardHtml.includes('data-sized="true"') &&
+    sizedCardHtml.includes("width:420px") &&
+    sizedCardHtml.includes("height:300px") &&
+    sizedCardHtml.includes("dsh-tc-cardResize")
+);
+const sizedWithPresetHtml = renderToString(
+  jsx(tc.TaskCard, cardProps({ x: 10, y: 10, collapsed: false, hidden: false, pinned: false, w: 500, style: { width: "wide" } }))
+);
+check("manual size suppresses the width preset attribute", !sizedWithPresetHtml.includes('data-width="wide"') && sizedWithPresetHtml.includes("width:500px"));
+const collapsedCardHtml = renderToString(jsx(tc.TaskCard, cardProps({ x: 10, y: 10, collapsed: true, hidden: false, pinned: false, w: 420, h: 300 })));
+check("collapsed card hides the resize handle", !collapsedCardHtml.includes("dsh-tc-cardResize"));
+
 // ---- declarative control blocks render ----
 const userCardHtml = renderToString(
   jsx(tc.TaskUserBody, {
