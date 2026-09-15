@@ -133,6 +133,12 @@ check(
 check("duration formatting", tc.fmtTaskDuration(90000) === "1分30秒" && tc.fmtTaskDuration(3600_000) === "1小时0分");
 check("dot states", tc.taskJobDot("running") === "ongoing" && tc.taskJobDot("killed") === "warn" && tc.taskJobDot("failed") === "error");
 check("style injected", styleTags.length > 0 && styleTags[0].textContent.includes("dsh-tc-panel"));
+check(
+  "interaction perf rules injected",
+  styleTags[0].textContent.includes(".dsh-tc-cardBusy{transition:none") &&
+    styleTags[0].textContent.includes(".dsh-tc-card{contain:layout style}") &&
+    styleTags[0].textContent.includes(".dsh-tc-interacting .dsh-tc-panel::after{animation-play-state:paused}")
+);
 
 // ---- card chrome honors declarative style ----
 const styledCardHtml = renderToString(
@@ -168,10 +174,10 @@ const cardProps = (layout) => ({
   boardRef: { current: null },
   actions: [],
   onDragStart: () => {},
-  onDragMove: () => {},
+  onDragCommit: () => {},
   onDragEnd: () => {},
   onResizeStart: () => {},
-  onResizeMove: () => {},
+  onResizeCommit: () => {},
   onResizeEnd: () => {},
   children: null,
 });
