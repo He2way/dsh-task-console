@@ -4,6 +4,14 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.9.3
+
+- Removed the `⚡ 低特效` toggle again (it is not wanted); the board keeps its glass look.
+- Fixed the "all cards brighten while dragging" bug: the interaction rule no longer restyles every card. Only the card being moved/sized changes (it drops its `backdrop-filter` and gets a slightly denser background); all other cards keep their exact normal appearance.
+- Drag is now **render-free from grab to release**: grabbing no longer re-orders React state (the card is raised with a direct inline `z-index`), so the board does not re-render at pointer-down; the order/position commit happens once on release. `transition` and `backdrop-filter` are also cleared inline on the busy card for the very first frames instead of waiting for a class-driven style pass.
+- Added `pointercancel` handling for both gestures, so an interrupted pointer can no longer leave the interaction state (and its styling) stuck on.
+- 按你的要求**移除「低特效」开关**；修复拖拽时“所有卡片发亮”：交互规则不再统一改所有卡片样式，只有被拖动/缩放的卡片临时去掉毛玻璃并略微加深底色，其余卡片外观完全不变；抓取到松手全程**不触发 React 渲染**（置顶改为直接写 `z-index`），松手才提交位置/尺寸与持久化；busy 卡片从第一帧起就用内联样式清掉 `transition` 与 `backdrop-filter`；补充 `pointercancel` 兜底，避免指针中断后状态与样式卡住。
+
 ## v0.9.2
 
 - Root-caused the remaining drag stutter to **compositing, not React**: every card carried `backdrop-filter: blur(18px)` and sampled the whole page (including the rotated app behind the board), so each pointer frame re-blurred the board. Fixes:

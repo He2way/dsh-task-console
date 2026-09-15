@@ -114,7 +114,6 @@ for (const [name, needle] of [
   ["subagent row", "研究助手"],
   ["reset button", "复位卡片"],
   ["new card button", "新建卡片"],
-  ["lite-effects toggle", "低特效"],
   ["back button", "返回会话"],
 ]) check("panel: " + name, panelHtml.includes(needle));
 
@@ -136,12 +135,12 @@ check("dot states", tc.taskJobDot("running") === "ongoing" && tc.taskJobDot("kil
 check("style injected", styleTags.length > 0 && styleTags[0].textContent.includes("dsh-tc-panel"));
 check(
   "interaction perf rules injected",
-  styleTags[0].textContent.includes(".dsh-tc-cardBusy{transition:none") &&
+  styleTags[0].textContent.includes(".dsh-tc-cardBusy{transition:none!important;will-change:transform;backdrop-filter:none!important") &&
     styleTags[0].textContent.includes(".dsh-tc-card{contain:layout style}") &&
     styleTags[0].textContent.includes(".dsh-tc-interacting .dsh-tc-panel::after{animation-play-state:paused}") &&
-    styleTags[0].textContent.includes("body.dsh-tc-interacting .dsh-tc-card{backdrop-filter:none") &&
     styleTags[0].textContent.includes(".dsh-tc-panel{contain:paint}") &&
-    styleTags[0].textContent.includes(".dsh-tc-lite .dsh-tc-card{backdrop-filter:none")
+    !styleTags[0].textContent.includes("dsh-tc-lite") &&
+    !styleTags[0].textContent.includes("body.dsh-tc-interacting .dsh-tc-card{")
 );
 
 // ---- card chrome honors declarative style ----
@@ -649,15 +648,6 @@ const updated = tc.applyTaskCardSpec({ op: "upsert", title: "测试卡", blocks:
 check("apply upsert by title updates", updated.ok && updated.created === false);
 const removed = tc.applyTaskCardSpec({ op: "delete", title: "测试卡" });
 check("apply delete by title", removed.ok && removed.op === "delete");
-
-// ---- low-effects mode is read from storage and applied ----
-globalThis.localStorage = {
-  getItem: (key) => (key === "dsh.taskconsole.lite" ? "1" : null),
-  setItem: () => {},
-};
-const liteHtml = renderToString(jsx(tc.TaskBackPanel, { useSessions, onClose: () => {} }));
-check("lite mode class applies", liteHtml.includes("dsh-tc-lite") && liteHtml.includes("特效已关"));
-globalThis.localStorage = undefined;
 
 console.log(failed === 0 ? "ALL PASS" : `${failed} FAILURES`);
 process.exit(failed === 0 ? 0 : 1);
