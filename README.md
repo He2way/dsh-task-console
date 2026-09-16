@@ -17,8 +17,9 @@ A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) clie
   - **工作区 Workspace** — cwd, session id, last update time.
   - **插件管理 Plugins** — the frame-wide dynamic Cordis inventory: each plugin's name, running/stopped state, and actions (停止 / 移除 with a two-step confirm), refreshed automatically on the dynamic-plugin events (`cordis/dynamic-package`, retract, run requests).
 - **Draggable & resizable glassmorphism cards / 可拖拽、可缩放毛玻璃卡片** — hold a card header and drag (pointer capture, clamped to the board); the grabbed card is raised by direct DOM z-order while dragging, and **drag the bottom-right corner to resize any card** (220–900px wide, 120–1200px tall, clamped to the board); every card can be collapsed (`▴/▾`); user cards can be pinned on top (`📌`); built-in cards can be hidden (`×`); positions, sizes and state persist in `localStorage` (`dsh.taskconsole.v1`); `复位卡片` restores the built-in layout while keeping your user cards. Gestures are **compositor-driven and render-free while the pointer is down**: pointer moves apply a transform (or an inline size) inside a `requestAnimationFrame`, the moved card drops its `backdrop-filter` for the duration (every other card keeps its normal look), grabbing no longer triggers a board re-render, and React state + `localStorage` are committed exactly once on release. Card bodies are memoized, and once the flip settles the rotated front face is culled (`visibility` + `content-visibility: hidden`) so the compositor only handles the board.
-- **User cards you add / edit / delete / 自定义悬浮卡片（新建 / 编辑 / 置顶 / 删除）** — the board header's `+ 新建卡片` creates a blank draft card and **auto-opens the conversation popup at the top-right**, where you describe the card's style and internal controls in language and the assistant shapes it; `✎` still offers manual editing of text + buttons; each user card carries `📌` 置顶 / `💬` 对话修改 / `✎` 编辑 / `🗑` 删除（两次点击确认）; the five built-in cards (session/jobs/subagents/workspace/plugins) stay read-only. Cards, positions, styles and states survive reloads in `localStorage`.
-- **Cards authored in the conversation / 对话生成卡片（内容高度自由）** — no copy/paste needed: while you chat (in the floating main-session window over the board, or in any conversation), an assistant/user message that contains a `[taskcard]…[/taskcard]` block is watched live and applied to the board (create / update / delete). The AI decides the card's content freely and picks the right **controls** for the need — text, headings, notes, stats, progress, trends, key-values, tables, code, links, tags, checklists, counters, toggles, countdowns, bar charts and action buttons — see [the card protocol](#user-cards--the-taskcard-protocol--自定义悬浮卡片与卡片协议).
+- **Infinite canvas & live collaboration / 无限画布与多人协作** — `🖼 画布` in the board header opens a **fullscreen infinite canvas** (wheel zoom anchored at the pointer, drag empty space to pan, `复位视图` to recenter); any user card publishes an independent copy onto it with `📤`. Canvas cards move/resize freely and keep the whole pipeline: control blocks, widget state, `✎` manual editing and `💬` agent refactor. Images can be dropped or pasted onto the canvas (downscaled to a bounded JPEG and stored as an `image` control). Canvases are named, switchable and kept per browser (`dsh.taskconsole.canvas.v1`); `复制分享串` emits a `DSHCANVAS1:…` string carrying the relay URL + canvas id + optional token, and `协作 → 加入` adopts it. Multi-user editing runs over the **zero-dependency relay shipped in [`relay/server.mjs`](./relay/server.mjs)** (`node relay/server.mjs --port 8787 --token <secret>`): a joiner receives the room snapshot, every card mutation is broadcast, presence is shown in the canvas bar, and conflicts resolve **last-writer-wins per card** (`updatedAt`, then `rev`). See [infinite canvas & collaboration](#infinite-canvas--collaboration--无限画布与多人协作).
+- **User cards you add / edit / delete / 自定义悬浮卡片（新建 / 编辑 / 置顶 / 删除）** — the board header's `+ 新建卡片` creates a blank draft card and **auto-opens the conversation popup at the top-right**, where you describe the card's style and internal controls in language and the assistant shapes it; `✎` still offers manual editing of text + buttons; each user card carries `📌` 置顶 / `📤` 发布为副本 / `💬` 对话修改 / `✎` 编辑 / `🗑` 删除（两次点击确认）; the five built-in cards (session/jobs/subagents/workspace/plugins) stay read-only. Cards, positions, styles and states survive reloads in `localStorage`.
+- **Cards authored in the conversation / 对话生成卡片（内容高度自由）** — no copy/paste needed: while you chat (in the floating main-session window over the board, or in any conversation), an assistant/user message that contains a `[taskcard]…[/taskcard]` block is watched live and applied to the board (create / update / delete). The AI decides the card's content freely and picks the right **controls** for the need — text, headings, notes, stats, progress, trends, key-values, tables, code, links, tags, images, checklists, counters, toggles, countdowns, bar charts and action buttons — see [the card protocol](#user-cards--the-taskcard-protocol--自定义悬浮卡片与卡片协议).
 - **Refactor a card by talking / 💬 对话重构卡片** — every user card carries a `💬` button (and `+ 新建卡片` auto-opens it) with a top-right conversation popup: describe the change in natural language and send. The plugin **calls a temporary agent session**, streams that agent's reply into the popup, parses its `[taskcard]` block and applies it to the card (including deletion); the helper session is archived afterwards and the main conversation is left untouched. The helper is a **fresh blank session** created in the source session's workspace (or cwd), so it inherits neither that conversation's history nor its agent inbox; `session.fork` remains only as a fallback when `create` is unavailable, and that path drops inherited queue items and stops a stale inherited turn before prompting. The reply is read from the helper session's own **event window** (durable `assistant/message` events plus its streaming rows) — session snapshots carry lifecycle state only — and only after the instruction itself shows up there as a user message. If the agent services are unavailable it falls back to sending through the current main session, and the popup says why.
 - **Theme aware / 明暗主题自适应** — follows the DSH theme (`data-ds-dark-theme`), respects `prefers-reduced-motion`.
 
@@ -52,8 +53,9 @@ Then restart the `dsh web` process (or reload the profile) so the new loader row
 1. Click the floating glass button `⇄ 任务台` (bottom-right).
 2. The page flips to the back — the glass task console for the current session. The button stays at the bottom-right, so click it again (now `◀ 返回正面`) to flip straight back; the conversation input bar also stays put at the bottom, so you can keep typing and sending while the board is open.
 3. Drag cards by their headers; **drag a card's bottom-right corner** to resize it (the size sticks and is remembered per card); `▴/▾` collapses a card, `×` hides a built-in card. Built-in cards are read-only.
-4. `+ 新建卡片` creates a blank draft card and **auto-opens the agent conversation popup at the top-right** — describe the style and the internal controls you want (e.g. “周报样式，蓝色强调、宽卡片，加一个完成清单和复制按钮”), send, and a temporary agent session refactors the card from your description. On a user card use `📌` (pin), `💬` (对话重构), `✎` (edit), `🗑` (delete — click twice).
-5. `复位卡片` restores the built-in layout (your user cards are kept); `返回会话` / `Esc` also flip back to the chat.
+4. `+ 新建卡片` creates a blank draft card and **auto-opens the agent conversation popup at the top-right** — describe the style and the internal controls you want (e.g. “周报样式，蓝色强调、宽卡片，加一个完成清单和复制按钮”), send, and a temporary agent session refactors the card from your description. On a user card use `📌` (pin), `📤` (publish a copy to the canvas), `💬` (对话重构), `✎` (edit), `🗑` (delete — click twice).
+5. `🖼 画布` opens the infinite canvas: publish copies, arrange them freely, drop images, then `复制分享串` and hand the string to someone else (they paste it under `协作 → 加入`) to edit the same canvas together — see [infinite canvas & collaboration](#infinite-canvas--collaboration--无限画布与多人协作).
+6. `复位卡片` restores the built-in layout (your user cards are kept); `返回会话` / `Esc` also flip back to the chat.
 
 ## User cards & the [taskcard] protocol / 自定义悬浮卡片与卡片协议
 
@@ -96,6 +98,7 @@ A **user card** is authored by any conversation message: the board watches the c
 | `kv` | 键值对行 | `rows: [[k, v], …]`（也接受 `items: [{ key\|label, value }]`） |
 | `links` | 链接列表（仅 http/https） | `items: [{ label, url }]` |
 | `chips` | 标签胶囊 | `items: ["a", "b"]` |
+| `image` | 图片（`https`/`http` 或 `data:image/*`，data URL ≤700KB） | `src`, `caption?`, `alt?` |
 | `checklist` | 复选清单（勾选持久化） | `key`, `items: [{ id, label }]` |
 | `counter` | 计数器（± 步进、持久化） | `key`, `label`, `step?`, `min?`, `max?` |
 | `button` | 动作按钮 | `label`, `action`, `value` |
@@ -146,16 +149,39 @@ A **user card** is authored by any conversation message: the board watches the c
 - **Card store:** the board keeps a single module store (`cards` + stacking `order`) shared by the React panel and the conversation watcher; every write persists to `localStorage` and notifies open panels. Built-in cards always start from fresh defaults merged over the saved layout; user cards are adopted verbatim after validation.
 - **Card watcher:** the board polls the live chat rows for `[taskcard]` blocks. It reads `data-chat-flow-kind` and accepts the kinds that carry message text — `user`, `steering` and the chat package's settled-assistant kind **`assistant-step`** (plus the legacy `assistant` alias). The `turn-process` controller row is deliberately skipped: it groups a whole turn, so reading it would apply one turn's text twice.
 - **Temporary agent session:** the card popup creates a **blank session** (`sessions.create` targeting the source session's registered workspace, else its cwd) as the helper, so it inherits neither the conversation's history nor its agent inbox. `session.fork` is only the fallback for a host that cannot create. That fallback carries a known trap: the fork cut extends through trailing out-of-band appends up to the next `turn/start`, so a source message still sitting in the inbox (`agent/inbox/spliced` next-turn insert) is copied into the child as pending work — the child answers *that* first and the card instruction queues behind it. The plugin therefore classifies the seeded tail (unconsumed inbox insert, or an open turn) and, on the fork path, removes the inherited queue items and cancels the stale turn before prompting, re-baselining afterwards. The helper is never made current; the plugin calls its `open()` to subscribe its event window, then reads `assistant/message` events (and `assistant/live-chunk` deltas) newer than the baseline, accepting a reply only once the instruction itself has landed as a user message in that window — otherwise it degrades to the main session immediately instead of idling. The helper is archived afterwards through the `workspaces` service. Session snapshots expose lifecycle state only — they carry no `nodes`/`partial` transcript view.
-- The node half is an empty `apply()` stub so the plugin appears in the host Loader (standard for pure-UI client plugins).
+- The node half is an empty `apply()` stub so the plugin appears in the host Loader (standard for pure-UI client plugins). The relay in `relay/` is a separate, optional process — the plugin itself needs no host code.
+
+## Infinite canvas & collaboration / 无限画布与多人协作
+
+Open it with `🖼 画布` in the board header (or publish straight from a card with `📤`).
+
+- **Pan / zoom** — wheel zooms around the pointer (20 %–250 %), drag empty space to pan, `复位视图` recenters. The grid follows the view; the plane is a plain `transform`, so panning and zooming stay off the React render path.
+- **Publish as a copy** — `📤` on a user card copies its title, control blocks and style into an **independent canvas card** placed near the current viewport (repeatable; later edits do not affect the board card).
+- **Canvas cards** — drag by the header, resize from the bottom-right corner, `✎` manual edit, `💬` agent refactor and per-card widget state, all reusing the board pipelines.
+- **Images** — drop files onto the canvas or paste from the clipboard; images are downscaled to a bounded JPEG (at most 700 KB of data URL) and stored as an `image` control. Larger images are refused with a hint.
+- **Named canvases** — `+ 新画布`, rename in the bar, switch with the selector, `删除画布` removes it locally. Everything lives in `localStorage` (`dsh.taskconsole.canvas.v1`) and is mirrored across windows of the same browser via `storage` events.
+- **Share string** — `复制分享串` produces `DSHCANVAS1:<base64url>` carrying `{ relay, canvas id, name, token }`. The other person needs the same plugin installed (in their own DSH), then `协作 → 加入` paste adopts the canvas and connects.
+- **Relay** — `relay/server.mjs` is a zero-dependency WebSocket relay:
+
+  ```bash
+  node relay/server.mjs --port 8787 --host 0.0.0.0 --data ./relay-data --token <secret>
+  # then point the canvas at: ws://<host>:8787   and share the string
+  ```
+
+  Rooms are keyed by canvas id, persisted to `--data/<canvasId>.json` (debounced), and every accepted op is broadcast to the other participants. Presence (`协作 · N 人在线`, nickname list) comes from the relay's `peers` messages; clients reconnect with backoff and replay queued ops.
+- **Conflict semantics** — last-writer-wins **per card**: the newer `updatedAt` wins, with the `rev` string (`clientId:base36 time`) as the tie-break. Concurrent edits to the same card therefore keep one version; different cards merge cleanly. Deletions are broadcast as ops (no tombstone history), and each client's viewport is local.
+- **Limits & security** — one message ≤ 900 KB (larger content stays local, with a hint), images ≤ 700 KB of data URL, widgets/controls keep the board's bounds. The relay token is a **bearer secret**: anyone holding it can edit every canvas on that relay, so run it on TLS (`wss://`) or behind a firewall/VPN when it is internet-reachable. `relay/smoke.mjs` (also `npm run test:relay`) exercises the real handshake, snapshot exchange, op broadcast, presence and token rejection.
 
 ## Development / 开发
 
 No build step — `lib/client.js` is both source and shipped bundle (ModuleLoader format, zero dependencies beyond React).
 
 ```bash
-npm i          # react + react-dom for the smoke test
-npm run check  # syntax-check the shipped bundle
-npm test       # smoke.mjs: SSR-renders the components with fixture state
+npm i               # react + react-dom for the smoke test
+npm run check       # syntax-check the shipped bundle
+npm test            # smoke.mjs: SSR-renders the components with fixture state
+npm run relay       # start the collaboration relay (relay/server.mjs)
+npm run test:relay  # relay protocol smoke test (handshake, ops, presence, token)
 ```
 
 ## Changelog / 变更记录

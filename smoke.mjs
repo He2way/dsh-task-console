@@ -649,5 +649,66 @@ check("apply upsert by title updates", updated.ok && updated.created === false);
 const removed = tc.applyTaskCardSpec({ op: "delete", title: "测试卡" });
 check("apply delete by title", removed.ok && removed.op === "delete");
 
+// ---- image control ----
+const imageSpec = tc.parseTaskCardSpec('[taskcard] { "title": "图", "blocks": [{ "kind": "image", "src": "data:image/png;base64,AAAA", "caption": "截图" }, { "kind": "image", "src": "javascript:alert(1)" }] } [/taskcard]');
+check(
+  "image control parses and rejects unsafe src",
+  imageSpec !== null && imageSpec.blocks.length === 1 && imageSpec.blocks[0].kind === "image" && imageSpec.blocks[0].caption === "截图"
+);
+const imageHtml = renderToString(jsx(tc.TaskUserBody, { card: { title: "图", blocks: [{ kind: "image", src: "data:image/png;base64,AAAA", caption: "截图" }] }, onWidget: () => {} }));
+check("image control renders", imageHtml.includes("dsh-tc-img") && imageHtml.includes("截图"));
+
+// ---- infinite canvas + collaboration helpers ----
+const copySource = { id: "usr-1", title: "源卡", blocks: [{ kind: "text", text: "hi" }], style: { accent: "blue" } };
+const copied = tc.canvasCopyCard(copySource, 10, 20, 1000);
+check(
+  "publish copy is an independent canvas card",
+  copied.id !== copySource.id &&
+    copied.title === "源卡" &&
+    copied.x === 10 &&
+    copied.y === 20 &&
+    copied.blocks.length === 1 &&
+    copied.style.accent === "blue"
+);
+check(
+  "last-writer-wins merge keeps the newer card",
+  tc.mergeCanvasCard({ id: "c", updatedAt: 5, rev: "a" }, { id: "c", updatedAt: 9, rev: "b" }).updatedAt === 9 &&
+    tc.mergeCanvasCard({ id: "c", updatedAt: 9, rev: "z" }, { id: "c", updatedAt: 9, rev: "a" }).rev === "z"
+);
+const shareText = tc.encodeCanvasShare({ relay: "ws://127.0.0.1:8787", canvasId: "cv1", name: "团队画布", token: "t-1" });
+const shareInfo = tc.decodeCanvasShare(shareText);
+check(
+  "share string round-trips",
+  shareInfo !== null && shareInfo.relay === "ws://127.0.0.1:8787" && shareInfo.canvasId === "cv1" && shareInfo.name === "团队画布" && shareInfo.token === "t-1"
+);
+check("share string rejects foreign text", tc.decodeCanvasShare("hello") === null);
+
+const canvas = tc.canvasCreate("测试画布");
+const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });
+check(
+  "canvas publish adds a copy into the active canvas",
+  tc.canvasSnapshot().canvases[canvas.id] !== void 0 &&
+    tc.canvasSnapshot().canvases[published.canvasId].cards[published.cardId] !== void 0
+);
+const canvasMerged = tc.mergeCanvasState(tc.canvasSnapshot(), {
+  canvases: {
+    [canvas.id]: { id: canvas.id, name: "远端改名", updatedAt: Date.now() + 1000, cards: { remote1: { id: "remote1", title: "远端卡", x: 5, y: 5, updatedAt: Date.now() + 1000, rev: "r1", blocks: [{ kind: "text", text: "remote" }] } } },
+  },
+});
+check(
+  "canvas state merge adopts remote cards",
+  canvasMerged.canvases[canvas.id].cards.remote1 !== void 0 && canvasMerged.canvases[canvas.id].cards[published.cardId] !== void 0
+);
+const canvasHtml = renderToString(jsx(tc.TaskCanvasView, { onClose: () => {} }));
+check(
+  "canvas view renders board, card and collaboration entry",
+  canvasHtml.includes("无限画布") &&
+    canvasHtml.includes("源卡") &&
+    canvasHtml.includes("复制分享串") &&
+    canvasHtml.includes("dsh-tc-canvasScroll") &&
+    canvasHtml.includes("dsh-tc-canvasCard")
+);
+check("canvas share string available for the active canvas", typeof tc.canvasShareString() === "string" && tc.canvasShareString().startsWith("DSHCANVAS1:"));
+
 console.log(failed === 0 ? "ALL PASS" : `${failed} FAILURES`);
 process.exit(failed === 0 ? 0 : 1);

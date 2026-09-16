@@ -1,7 +1,7 @@
 {
   "name": "dsh-task-console",
-  "version": "0.9.3",
-  "description": "DSH client plugin — flip to the back of the page for a floating glass task console: live background jobs, subagents, session overview and workspace of the current session, with mouse-draggable and mouse-resizable cards (bottom-right handle, size persisted per card); the top-right card conversation calls a temporary agent session to refactor each card's style and internal controls from natural language, and any conversation can author cards via [taskcard] blocks (text/heading/note/stats/progress/trend/kv/links/chips/checklist/counter/button/table/code/toggle/countdown/bars).",
+  "version": "0.10.0",
+  "description": "DSH client plugin — flip to the back of the page for a floating glass task console: live background jobs, subagents, session overview and workspace of the current session, with mouse-draggable and mouse-resizable cards (bottom-right handle, size persisted per card); the top-right card conversation calls a temporary agent session to refactor each card's style and internal controls from natural language, and any conversation can author cards via [taskcard] blocks (text/heading/note/stats/progress/trend/kv/links/chips/checklist/counter/button/table/code/toggle/countdown/bars/image). Cards can be published as copies onto a fullscreen infinite canvas with named boards, share strings and a zero-dependency WebSocket relay for multi-user editing.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -12,6 +12,7 @@
   },
   "files": [
     "lib",
+    "relay",
     "cordis.patch.yml",
     "README.md",
     "CHANGELOG.md",
@@ -30,7 +31,10 @@
     "cards",
     "agent",
     "taskcard",
-    "trend"
+    "trend",
+    "infinite-canvas",
+    "collaboration",
+    "websocket-relay"
   ],
   "license": "MIT",
   "repository": {
@@ -62,6 +66,8 @@
   },
   "scripts": {
     "check": "node --check lib/client.js",
-    "test": "node smoke.mjs"
+    "relay": "node relay/server.mjs",
+    "test": "node smoke.mjs",
+    "test:relay": "node relay/smoke.mjs"
   }
 }

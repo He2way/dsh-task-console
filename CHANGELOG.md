@@ -4,6 +4,15 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.10.0
+
+- **Fullscreen infinite canvas**: `🖼 画布` opens a pannable/zoomable plane (wheel zoom anchored at the pointer, 20 %–250 %, drag empty space to pan, `复位视图`). Panning/zooming write the plane `transform` directly and commit the view once the gesture idles, so the canvas stays off the React render path.
+- **Publish as a copy**: `📤` on a user card copies its title, control blocks and style into an **independent canvas card** near the current viewport. Canvas cards drag by the header, resize from the corner, and keep `✎` manual editing, `💬` agent refactor and per-card widget state (the refactor pipeline now takes an `applySpec` hook so it can target canvas cards instead of the board store).
+- **Named canvases + share string**: multiple canvases with rename/switch/delete, persisted in `localStorage` and mirrored across same-browser windows through `storage` events. `复制分享串` emits `DSHCANVAS1:<base64url>` carrying relay URL + canvas id + name + optional token; `协作 → 加入` adopts it.
+- **Images**: drop or paste an image onto the canvas — it is downscaled to a bounded JPEG and stored as a new declarative `image` control (`src`, `caption?`, `alt?`; only `https`/`http`/`data:image/*` accepted, ≤ 700 KB data URL).
+- **Zero-dependency relay** (`relay/server.mjs`, `npm run relay`): WebSocket rooms per canvas id, snapshot on join, op broadcast, presence, heartbeat, debounced snapshot persistence to `--data/<canvasId>.json`, optional shared `--token`. The client sync layer reconnects with backoff, queues ops while offline and merges conflicts last-writer-wins per card (`updatedAt`, then `rev`); oversized content stays local with a hint. `relay/smoke.mjs` (`npm run test:relay`) covers the real handshake, snapshot, broadcast, presence and token rejection.
+- **无限画布与协作**：看板 `🖼 画布` 打开全屏无限画布（滚轮以指针为锚缩放、拖空白平移、复位视图），平移缩放直接写 `transform` 并只在手势空闲时提交，不进入 React 渲染路径；用户卡片 `📤` 发布独立副本到画布（可拖动/缩放/手动编辑/💬 对话重构/保留交互状态，agent 重构新增 `applySpec` 挂钩以作用于画布卡片）；支持多命名画布（重命名/切换/删除，`localStorage` 持久化并跨同浏览器窗口用 `storage` 事件同步）；`复制分享串` 生成 `DSHCANVAS1:` 分享串（中继地址+画布 id+名称+可选 token），`协作 → 加入` 粘贴即接入；画布可拖拽/粘贴图片（压缩为受限 JPEG，作为新的 `image` 控件）；仓库自带零依赖中继 `relay/server.mjs`（按画布房间、入房快照、操作广播、在线状态、心跳、快照落盘、可选 `--token`），客户端带重连退避与离线队列，冲突按卡片“最后写入获胜”（`updatedAt`，再比 `rev`），超限内容仅本地保存并提示。
+
 ## v0.9.3
 
 - Removed the `⚡ 低特效` toggle again (it is not wanted); the board keeps its glass look.
