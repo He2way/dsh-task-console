@@ -3,6 +3,7 @@
 // the overlay root + back panel with fixture session state.
 // Run: npm test   (needs `npm i` once for react/react-dom devDependencies)
 import { readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -709,6 +710,40 @@ check(
     canvasHtml.includes("dsh-tc-canvasCard")
 );
 check("canvas share string available for the active canvas", typeof tc.canvasShareString() === "string" && tc.canvasShareString().startsWith("DSHCANVAS1:"));
+
+// ---- architecture diagram dock (embedded archify artifact) ----
+const diagramHtml = await tc.taskDiagramHtml();
+check(
+  "embedded diagram decodes to the archify artifact",
+  typeof diagramHtml === "string" &&
+    diagramHtml.startsWith("<!DOCTYPE html>") &&
+    diagramHtml.includes("archify") &&
+    createHash("sha256").update(diagramHtml, "utf8").digest("hex") === tc.TASK_DIAGRAM_SHA256
+);
+const diagramSource = join(HERE, "docs", "architecture.html");
+check("embedded diagram matches docs/architecture.html", !existsSync(diagramSource) || readFileSync(diagramSource, "utf8") === diagramHtml);
+check("embedded diagram decode is cached", (await tc.taskDiagramHtml()) === diagramHtml);
+
+const dockHtml = renderToString(jsx(tc.TaskDiagramDock, { onClose: () => {} }));
+check(
+  "diagram dock renders a sandboxed frame with the artifact",
+  dockHtml.includes("dsh-tc-diagramDock") &&
+    dockHtml.includes("dsh-tc-diagramGrip") &&
+    dockHtml.includes("项目逻辑框图") &&
+    dockHtml.includes("新标签打开") &&
+    // SSR keeps the camelCase prop name; the client sets the srcdoc property itself
+    (dockHtml.includes("srcdoc=") || dockHtml.includes("srcDoc=")) &&
+    dockHtml.includes('sandbox="allow-scripts allow-downloads allow-modals allow-popups"') &&
+    dockHtml.includes("&lt;!DOCTYPE html&gt;")
+);
+check("diagram dock bar reports the artifact size", dockHtml.includes(Math.round(diagramHtml.length / 1024) + "KB · archify"));
+check("diagram dock width clamps to sane bounds", tc.taskDiagramWidthClamp(10) === 380 && tc.taskDiagramWidthClamp(5000) === 1440);
+
+const panelHtmlWithDiagramButton = renderToString(jsx(tc.TaskBackPanel, { useSessions, onClose: () => {} }));
+check(
+  "panel: diagram dock toggle",
+  panelHtmlWithDiagramButton.includes("🗺 框图") && panelHtmlWithDiagramButton.includes("在右侧显示当前项目的逻辑框图")
+);
 
 console.log(failed === 0 ? "ALL PASS" : `${failed} FAILURES`);
 process.exit(failed === 0 ? 0 : 1);

@@ -1,7 +1,7 @@
 {
   "name": "dsh-task-console",
-  "version": "0.10.0",
-  "description": "DSH client plugin — flip to the back of the page for a floating glass task console: live background jobs, subagents, session overview and workspace of the current session, with mouse-draggable and mouse-resizable cards (bottom-right handle, size persisted per card); the top-right card conversation calls a temporary agent session to refactor each card's style and internal controls from natural language, and any conversation can author cards via [taskcard] blocks (text/heading/note/stats/progress/trend/kv/links/chips/checklist/counter/button/table/code/toggle/countdown/bars/image). Cards can be published as copies onto a fullscreen infinite canvas with named boards, share strings and a zero-dependency WebSocket relay for multi-user editing.",
+  "version": "0.11.0",
+  "description": "DSH client plugin — flip to the back of the page for a floating glass task console: live background jobs, subagents, session overview and workspace of the current session, with mouse-draggable and mouse-resizable cards (bottom-right handle, size persisted per card); the top-right card conversation calls a temporary agent session to refactor each card's style and internal controls from natural language, and any conversation can author cards via [taskcard] blocks (text/heading/note/stats/progress/trend/kv/links/chips/checklist/counter/button/table/code/toggle/countdown/bars/image). Cards can be published as copies onto a fullscreen infinite canvas with named boards, share strings and a zero-dependency WebSocket relay for multi-user editing, and a right-hand dock renders the project's archify architecture diagram (embedded, sandboxed, resizable).",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -13,6 +13,8 @@
   "files": [
     "lib",
     "relay",
+    "docs",
+    "tools",
     "cordis.patch.yml",
     "README.md",
     "CHANGELOG.md",
@@ -34,7 +36,9 @@
     "trend",
     "infinite-canvas",
     "collaboration",
-    "websocket-relay"
+    "websocket-relay",
+    "architecture-diagram",
+    "archify"
   ],
   "license": "MIT",
   "repository": {
@@ -68,6 +72,7 @@
     "check": "node --check lib/client.js",
     "relay": "node relay/server.mjs",
     "test": "node smoke.mjs",
-    "test:relay": "node relay/smoke.mjs"
+    "test:relay": "node relay/smoke.mjs",
+    "embed:diagram": "node tools/embed-diagram.mjs"
   }
 }

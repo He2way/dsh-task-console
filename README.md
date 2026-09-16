@@ -21,6 +21,7 @@ A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) clie
 - **User cards you add / edit / delete / 自定义悬浮卡片（新建 / 编辑 / 置顶 / 删除）** — the board header's `+ 新建卡片` creates a blank draft card and **auto-opens the conversation popup at the top-right**, where you describe the card's style and internal controls in language and the assistant shapes it; `✎` still offers manual editing of text + buttons; each user card carries `📌` 置顶 / `📤` 发布为副本 / `💬` 对话修改 / `✎` 编辑 / `🗑` 删除（两次点击确认）; the five built-in cards (session/jobs/subagents/workspace/plugins) stay read-only. Cards, positions, styles and states survive reloads in `localStorage`.
 - **Cards authored in the conversation / 对话生成卡片（内容高度自由）** — no copy/paste needed: while you chat (in the floating main-session window over the board, or in any conversation), an assistant/user message that contains a `[taskcard]…[/taskcard]` block is watched live and applied to the board (create / update / delete). The AI decides the card's content freely and picks the right **controls** for the need — text, headings, notes, stats, progress, trends, key-values, tables, code, links, tags, images, checklists, counters, toggles, countdowns, bar charts and action buttons — see [the card protocol](#user-cards--the-taskcard-protocol--自定义悬浮卡片与卡片协议).
 - **Refactor a card by talking / 💬 对话重构卡片** — every user card carries a `💬` button (and `+ 新建卡片` auto-opens it) with a top-right conversation popup: describe the change in natural language and send. The plugin **calls a temporary agent session**, streams that agent's reply into the popup, parses its `[taskcard]` block and applies it to the card (including deletion); the helper session is archived afterwards and the main conversation is left untouched. The helper is a **fresh blank session** created in the source session's workspace (or cwd), so it inherits neither that conversation's history nor its agent inbox; `session.fork` remains only as a fallback when `create` is unavailable, and that path drops inherited queue items and stops a stale inherited turn before prompting. The reply is read from the helper session's own **event window** (durable `assistant/message` events plus its streaming rows) — session snapshots carry lifecycle state only — and only after the instruction itself shows up there as a user message. If the agent services are unavailable it falls back to sending through the current main session, and the popup says why.
+- **Right-hand architecture diagram / 右侧项目逻辑框图** — `🗺 框图` in the board header docks the project's own architecture diagram against the right edge of the board (drag the left edge to change its width; the width is remembered). The diagram is an **archify artifact** ([`docs/architecture.html`](./docs/architecture.html), generated from [`docs/architecture.json`](./docs/architecture.json)) that ships **inside the client bundle** — gzipped + base64 (`tools/embed-diagram.mjs`), decompressed on first open with `DecompressionStream` and rendered in a sandboxed `iframe` (`srcdoc`), so there is no extra file or network request. Inside the dock the diagram stays fully interactive (zoom, click nodes, light/dark, export); `新标签打开` opens the same artifact full-screen in a new tab. See [architecture diagram](#architecture-diagram--右侧项目逻辑框图).
 - **Theme aware / 明暗主题自适应** — follows the DSH theme (`data-ds-dark-theme`), respects `prefers-reduced-motion`.
 
 ## Install / 安装
@@ -172,6 +173,26 @@ Open it with `🖼 画布` in the board header (or publish straight from a card 
 - **Conflict semantics** — last-writer-wins **per card**: the newer `updatedAt` wins, with the `rev` string (`clientId:base36 time`) as the tie-break. Concurrent edits to the same card therefore keep one version; different cards merge cleanly. Deletions are broadcast as ops (no tombstone history), and each client's viewport is local.
 - **Limits & security** — one message ≤ 900 KB (larger content stays local, with a hint), images ≤ 700 KB of data URL, widgets/controls keep the board's bounds. The relay token is a **bearer secret**: anyone holding it can edit every canvas on that relay, so run it on TLS (`wss://`) or behind a firewall/VPN when it is internet-reachable. `relay/smoke.mjs` (also `npm run test:relay`) exercises the real handshake, snapshot exchange, op broadcast, presence and token rejection.
 
+## Architecture diagram / 右侧项目逻辑框图
+
+`🗺 框图` in the board header opens a dock on the right edge of the task board showing the plugin's own architecture diagram — components (client bundle, card store, protocol watcher, board panel, canvas core, relay, DSH slots), their connections and the data-flow notes.
+
+![Architecture diagram](./docs/architecture.visual-check.1440x900.light.png)
+
+- **Interactive** — the dock embeds the real artifact: wheel-zoom, click a node for details, switch light/dark, guided views, export PNG/SVG. Drag the dock's **left edge** to resize it (380px – viewport, remembered in `dsh.taskconsole.dockwidth.v1`); `新标签打开` opens it full-screen in a new tab; `关闭` (or the header toggle) puts it away.
+- **No extra files, no network** — `docs/architecture.html` (~640 KB) is gzipped to ~114 KB and base64-embedded in `lib/client.js`, decoded **lazily on first open** with `DecompressionStream` and cached for the session. Older browsers without `DecompressionStream` get a clear message instead of a broken frame.
+- **Sandboxed** — the frame runs with `sandbox="allow-scripts allow-downloads allow-modals allow-popups"` (opaque origin), so the artifact's scripts can render and export but cannot touch the app's DOM or storage.
+- **Regenerate** — the diagram is generated with the `archify` skill; edit `docs/architecture.json` (the typed spec) and deliver a new artifact, then re-embed it:
+
+  ```bash
+  archify validate docs/architecture.json --repo-root .   # spec checks
+  archify deliver  docs/architecture.json --quality showcase --repo-root .
+  node tools/embed-diagram.mjs                            # gzip + base64 into lib/client.js
+  npm test                                                # asserts the embedded copy == docs/architecture.html
+  ```
+
+  `smoke.mjs` re-computes the sha256 of the decoded payload and compares it with `docs/architecture.html` and with the embedded `TASK_DIAGRAM_SHA256`, so a stale embed fails the test.
+
 ## Development / 开发
 
 No build step — `lib/client.js` is both source and shipped bundle (ModuleLoader format, zero dependencies beyond React).
@@ -182,6 +203,7 @@ npm run check       # syntax-check the shipped bundle
 npm test            # smoke.mjs: SSR-renders the components with fixture state
 npm run relay       # start the collaboration relay (relay/server.mjs)
 npm run test:relay  # relay protocol smoke test (handshake, ops, presence, token)
+node tools/embed-diagram.mjs  # re-embed docs/architecture.html into lib/client.js
 ```
 
 ## Changelog / 变更记录

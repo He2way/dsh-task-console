@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "翻页工作台（dsh-task-console）逻辑框图",
+    "output": "architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [1400, 640],
+    "repository": {
+      "url": "https://github.com/He2way/dsh-task-console",
+      "revision": "ca3d7dd83c334e45077dcd974231540fa9c7ae32"
+    },
+    "views": [
+      { "id": "card-path", "label": "卡片成形路径", "focus": ["user", "plugin", "agent", "protocol", "board"], "note": "从对话描述到卡片落到看板的完整链路。" },
+      { "id": "canvas-path", "label": "发布与协作", "focus": ["board", "canvas", "relay", "peer"], "note": "卡片发布为副本后进入无限画布，并通过中继共享给其他参与者。" },
+      { "id": "persistence", "label": "持久化与宿主", "focus": ["host", "gui", "plugin", "store"], "note": "宿主提供会话与界面，插件把状态写进浏览器存储。" }
+    ]
+  },
+  "components": [
+    { "id": "host", "type": "backend", "label": "DSH 宿主", "sublabel": "会话 · agent · 工作区", "pos": [30, 70], "size": [150, 60] },
+    { "id": "gui", "type": "frontend", "label": "DSH 会话界面", "sublabel": "翻页正面 · 悬浮输入框", "pos": [300, 70], "size": [180, 60] },
+    { "id": "agent", "type": "backend", "label": "临时 agent 会话", "sublabel": "sessions.create · 空白会话", "pos": [540, 70], "size": [180, 60], "tag": "只回 [taskcard]" },
+    { "id": "protocol", "type": "backend", "label": "卡片协议", "sublabel": "[taskcard] 解析 · 校验", "pos": [810, 70], "size": [180, 60], "sources": [{ "path": "lib/client.js" }] },
+    { "id": "user", "type": "external", "label": "使用者", "sublabel": "浏览器 · 本机", "pos": [30, 300], "size": [120, 60] },
+    { "id": "plugin", "type": "frontend", "label": "任务台插件", "sublabel": "shell.overlay 承位", "pos": [300, 295], "size": [180, 70], "tag": "lib/client.js", "sources": [{ "path": "lib/client.js" }] },
+    { "id": "board", "type": "frontend", "label": "任务台看板", "sublabel": "内置卡 · 自定义卡", "pos": [540, 300], "size": [180, 60] },
+    { "id": "canvas", "type": "frontend", "label": "无限画布", "sublabel": "平移缩放 · 发布副本", "pos": [810, 300], "size": [180, 60], "sources": [{ "path": "lib/client.js" }] },
+    { "id": "relay", "type": "messagebus", "label": "协作中继", "sublabel": "WebSocket 房间广播", "pos": [1080, 300], "size": [170, 60], "tag": "relay/server.mjs", "sources": [{ "path": "relay/server.mjs" }] },
+    { "id": "store", "type": "database", "label": "浏览器存储", "sublabel": "localStorage · 跨窗口同步", "pos": [540, 480], "size": [180, 60], "tag": "dsh.taskconsole.*" },
+    { "id": "peer", "type": "external", "label": "其他参与者", "sublabel": "各自安装同一插件", "pos": [1080, 480], "size": [170, 60] }
+  ],
+  "connections": [
+    { "id": "user-to-plugin", "from": "user", "to": "plugin", "label": "⇄ 任务台翻页", "variant": "emphasis" },
+    { "id": "host-to-gui", "from": "host", "to": "gui", "label": "会话事件" },
+    { "id": "gui-to-plugin", "from": "gui", "to": "plugin", "label": "shell.overlay", "fromSide": "bottom", "toSide": "top", "labelAt": [392, 205] },
+    { "id": "plugin-to-agent", "from": "plugin", "to": "agent", "label": "💬 对话重构", "variant": "dashed", "fromSide": "right", "toSide": "left", "labelAt": [498, 205] },
+    { "id": "agent-to-protocol", "from": "agent", "to": "protocol", "label": "回复卡片块" },
+    { "id": "protocol-to-board", "from": "protocol", "to": "board", "label": "应用卡片", "fromSide": "bottom", "toSide": "top", "labelAt": [642, 232] },
+    { "id": "board-to-canvas", "from": "board", "to": "canvas", "label": "📤 发布副本", "variant": "emphasis", "labelAt": [765, 282] },
+    { "id": "canvas-to-relay", "from": "canvas", "to": "relay", "label": "操作广播" },
+    { "id": "relay-to-peer", "from": "relay", "to": "peer", "label": "快照 · 在线状态", "fromSide": "bottom", "toSide": "top", "labelAt": [1180, 420] },
+    { "id": "board-to-store", "from": "board", "to": "store", "label": "卡片持久化", "fromSide": "bottom", "toSide": "top", "labelAt": [642, 420] },
+    { "id": "canvas-to-store", "from": "canvas", "to": "store", "label": "画布持久化", "fromSide": "bottom", "toSide": "right", "labelAt": [806, 464] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "入口与交互", "items": ["右下角 ⇄ 任务台 把页面翻到背面", "输入框以悬浮窗保留，边看板边对话"] },
+    { "dot": "emerald", "title": "卡片与画布", "items": ["[taskcard] 协议让对话直接成形卡片", "📤 发布独立副本进入无限画布"] },
+    { "dot": "violet", "title": "协作与存储", "items": ["中继按画布房间广播，冲突按卡片最后写入获胜", "localStorage 持久化，同浏览器多窗口 storage 同步"] }
+  ]
+}
