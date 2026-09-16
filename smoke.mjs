@@ -659,6 +659,97 @@ check(
 const imageHtml = renderToString(jsx(tc.TaskUserBody, { card: { title: "图", blocks: [{ kind: "image", src: "data:image/png;base64,AAAA", caption: "截图" }] }, onWidget: () => {} }));
 check("image control renders", imageHtml.includes("dsh-tc-img") && imageHtml.includes("截图"));
 
+// ---- embedded web apps on cards ----
+check(
+  "embed url accepts http(s) and normalizes",
+  tc.cleanTaskEmbedUrl("https://example.com/app") === "https://example.com/app" &&
+    tc.cleanTaskEmbedUrl("  http://localhost:5173  ") === "http://localhost:5173/" &&
+    tc.cleanTaskEmbedUrl("http://127.0.0.1:8080/x?y=1") === "http://127.0.0.1:8080/x?y=1"
+);
+check(
+  "embed url rejects every non-http(s) scheme",
+  tc.cleanTaskEmbedUrl("javascript:alert(1)") === null &&
+    tc.cleanTaskEmbedUrl("data:text/html,<h1>x</h1>") === null &&
+    tc.cleanTaskEmbedUrl("file:///C:/secret.html") === null &&
+    tc.cleanTaskEmbedUrl("blob:https://example.com/abc") === null &&
+    tc.cleanTaskEmbedUrl("//example.com/app") === null &&
+    tc.cleanTaskEmbedUrl("example.com") === null &&
+    tc.cleanTaskEmbedUrl("") === null &&
+    tc.cleanTaskEmbedUrl(null) === null
+);
+check("embed host helper", tc.taskEmbedHost("http://localhost:5173/") === "localhost:5173");
+check("embed height clamps to bounds", tc.clampTaskEmbedHeight(10) === 120 && tc.clampTaskEmbedHeight(99999) === 1200 && tc.clampTaskEmbedHeight("x") === 300);
+
+const embedSpec = tc.parseTaskCardSpec(
+  '[taskcard] { "title": "应用卡", "blocks": [{ "kind": "embed", "url": "http://localhost:5173", "title": "本地应用", "height": 420 }, { "kind": "embed", "url": "javascript:alert(1)" }] } [/taskcard]'
+);
+check(
+  "embed control parses, normalizes and drops unsafe urls",
+  embedSpec !== null &&
+    embedSpec.blocks.length === 1 &&
+    embedSpec.blocks[0].kind === "embed" &&
+    embedSpec.blocks[0].url === "http://localhost:5173/" &&
+    embedSpec.blocks[0].title === "本地应用" &&
+    embedSpec.blocks[0].height === 420 &&
+    embedSpec.blocks[0].fill === false
+);
+check("embed is an advertised control kind", tc.TASK_BLOCK_KINDS.includes("embed"));
+
+const appCard = { title: "应用卡", blocks: [{ kind: "embed", url: "http://localhost:5173/", title: "本地应用", height: 420, fill: false }] };
+const appHtml = renderToString(jsx(tc.TaskUserBody, { card: appCard, onWidget: () => {} }));
+check(
+  "embedded app renders a sandboxed frame with its own bar",
+  appHtml.includes("dsh-tc-app") &&
+    appHtml.includes('src="http://localhost:5173/"') &&
+    appHtml.includes("sandbox=" + JSON.stringify(tc.TASK_EMBED_SANDBOX)) &&
+    appHtml.includes("dsh-tc-appTitle") &&
+    appHtml.includes("本地应用") &&
+    appHtml.includes("localhost:5173") &&
+    appHtml.includes("height:420px")
+);
+check(
+  "embed frame never gets top navigation, and same-origin apps lose allow-same-origin",
+  !tc.TASK_EMBED_SANDBOX.includes("allow-top-navigation") &&
+    !tc.TASK_EMBED_SANDBOX_OPAQUE.includes("allow-same-origin") &&
+    appHtml.includes("no-referrer")
+);
+const fillHtml = renderToString(jsx(tc.TaskUserBody, {
+  card: { title: "满屏应用", blocks: [{ kind: "embed", url: "https://example.com/app", fill: true }] },
+  onWidget: () => {},
+}));
+check(
+  "fill app stretches instead of using a fixed height",
+  fillHtml.includes("dsh-tc-appFill") &&
+    fillHtml.includes('data-fill="1"') &&
+    fillHtml.includes("height:") === false
+);
+const editorHtml = renderToString(jsx(tc.TaskCardEditor, { initial: { id: "usr-1", title: "应用卡", pinned: false, blocks: appCard.blocks }, onSave: () => {}, onCancel: () => {} }));
+check(
+  "card editor edits an existing embedded app",
+  editorHtml.includes("内嵌网页应用") &&
+    editorHtml.includes('value="http://localhost:5173/"') &&
+    editorHtml.includes("填满") &&
+    editorHtml.includes("+ 内嵌网页应用")
+);
+const editorBlocks = tc.taskEditorBlocks({ title: "t", body: "正文", buttons: [{ action: "copy", label: "复制", value: "x" }], embeds: [{ url: "https://example.com/app", title: "应用", height: 200, fill: false }, { url: "nope", title: "", height: 100, fill: false }] });
+check(
+  "editor result becomes text + button + validated embeds",
+  editorBlocks.length === 3 &&
+    editorBlocks[0].kind === "text" &&
+    editorBlocks[1].kind === "button" &&
+    editorBlocks[2].kind === "embed" &&
+    editorBlocks[2].url === "https://example.com/app" &&
+    editorBlocks[2].height === 200
+);
+const embedPrompt = tc.composeTaskCardChatPrompt({ id: "usr-1", title: "应用卡", blocks: [] }, "把本地应用嵌进来");
+check(
+  "card refactor prompt teaches the embed control",
+  embedPrompt.includes("embed：{ url, title?, height?, fill? }") && embedPrompt.includes("X-Frame-Options") && embedPrompt.includes("http://localhost:5173")
+);
+const appliedEmbed = tc.applyTaskCardSpec(embedSpec);
+check("embed spec applies to the board store", appliedEmbed.ok === true && appliedEmbed.created === true);
+if (appliedEmbed.ok) tc.applyTaskCardSpec({ op: "delete", title: "应用卡" });
+
 // ---- infinite canvas + collaboration helpers ----
 const copySource = { id: "usr-1", title: "源卡", blocks: [{ kind: "text", text: "hi" }], style: { accent: "blue" } };
 const copied = tc.canvasCopyCard(copySource, 10, 20, 1000);
