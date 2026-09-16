@@ -191,7 +191,7 @@ Open it with `🖼 画布` in the board header (or publish straight from a card 
   npm test                                                # asserts the embedded copy == docs/architecture.html
   ```
 
-  `smoke.mjs` re-computes the sha256 of the decoded payload and compares it with `docs/architecture.html` and with the embedded `TASK_DIAGRAM_SHA256`, so a stale embed fails the test.
+  `smoke.mjs` re-computes the sha256 of the decoded payload and compares it with `docs/architecture.html` and with the embedded `TASK_DIAGRAM_SHA256`, so a stale embed fails the test. `npm run verify:diagram` additionally opens the payload in headless Chrome (skipped when no Chrome is found) to prove that `DecompressionStream` decodes it byte-identically and that the artifact really renders inside the dock's sandboxed iframe.
 
 ## Development / 开发
 
@@ -204,6 +204,7 @@ npm test            # smoke.mjs: SSR-renders the components with fixture state
 npm run relay       # start the collaboration relay (relay/server.mjs)
 npm run test:relay  # relay protocol smoke test (handshake, ops, presence, token)
 node tools/embed-diagram.mjs  # re-embed docs/architecture.html into lib/client.js
+npm run verify:diagram        # headless-Chrome check of the embedded diagram frame
 ```
 
 ## Changelog / 变更记录

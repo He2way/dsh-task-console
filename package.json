@@ -73,6 +73,7 @@
     "relay": "node relay/server.mjs",
     "test": "node smoke.mjs",
     "test:relay": "node relay/smoke.mjs",
-    "embed:diagram": "node tools/embed-diagram.mjs"
+    "embed:diagram": "node tools/embed-diagram.mjs",
+    "verify:diagram": "node tools/verify-diagram-browser.mjs"
   }
 }
