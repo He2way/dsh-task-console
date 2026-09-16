@@ -721,7 +721,37 @@ check(
   "fill app stretches instead of using a fixed height",
   fillHtml.includes("dsh-tc-appFill") &&
     fillHtml.includes('data-fill="1"') &&
-    fillHtml.includes("height:") === false
+    fillHtml.includes("height:") === false &&
+    fillHtml.includes("dsh-tc-appGrip") === false
+);
+check(
+  "fixed-height app exposes the drag grip for its own height",
+  appHtml.includes("dsh-tc-appGrip") &&
+    appHtml.includes("dsh-tc-appGripBar") &&
+    appHtml.includes("dsh-tc-appGripLabel") &&
+    appHtml.includes("上下拖动调整这个内嵌应用的高度")
+);
+const gripCard = { title: "应用卡", blocks: [{ kind: "text", text: "x" }, { kind: "embed", url: "https://example.com/app", title: "应用", height: 300, fill: false }, { kind: "embed", url: "https://example.com/other", title: "铺满", fill: true }] };
+check(
+  "drag-resizing writes the block height without mutating the card",
+  tc.patchTaskEmbedHeight(gripCard, 1, 512).blocks[1].height === 512 &&
+    tc.patchTaskEmbedHeight(gripCard, 1, 512).blocks[0] === gripCard.blocks[0] &&
+    gripCard.blocks[1].height === 300 &&
+    tc.patchTaskEmbedHeight(gripCard, 1, 4).blocks[1].height === 120 &&
+    tc.patchTaskEmbedHeight(gripCard, 1, 99999).blocks[1].height === 1200
+);
+check(
+  "drag-resizing ignores no-ops, non-embed blocks, fill apps and bad input",
+  tc.patchTaskEmbedHeight(gripCard, 1, 300) === null &&
+    tc.patchTaskEmbedHeight(gripCard, 0, 400) === null &&
+    tc.patchTaskEmbedHeight(gripCard, 2, 400) === null &&
+    tc.patchTaskEmbedHeight(gripCard, 9, 400) === null &&
+    tc.patchTaskEmbedHeight(gripCard, 1, Number.NaN) === null &&
+    tc.patchTaskEmbedHeight(null, 0, 400) === null
+);
+check(
+  "the app block index used by the drag survives a card round-trip",
+  tc.sanitizeTaskBlocks(gripCard.blocks)[1].height === 300 && tc.sanitizeTaskBlocks(tc.patchTaskEmbedHeight(gripCard, 1, 512).blocks)[1].height === 512
 );
 const editorHtml = renderToString(jsx(tc.TaskCardEditor, { initial: { id: "usr-1", title: "应用卡", pinned: false, blocks: appCard.blocks }, onSave: () => {}, onCancel: () => {} }));
 check(

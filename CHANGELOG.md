@@ -4,6 +4,14 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.13.0
+
+- **Drag the embedded app to resize it / 内嵌网页可拖动调整大小**: every embedded web app now has a **grip on its bottom edge** — drag it up or down and the frame follows your pointer (rAF + inline height, no React render per move); the live pixel value is shown in a small chip while dragging, and the new height is **committed once on release** and persisted on that block (`height`), broadcast to collaborators when the card is on the canvas. `fill` apps show no grip: they follow the card's own bottom-right resize handle.
+  - **Layout pixels, not screen pixels**: the gesture reads `offsetHeight` and derives the current scale from `rect / offset`, so a drag inside the **zoomed infinite canvas** (20 %–250 %) converts screen pixels back to layout pixels correctly (verified: 120 screen px at 1.5× → exactly +80 layout px), and it is immune to the card's entry animation transform.
+  - **Fixed a real layout bug found by that check**: `.dsh-tc-appWrap` carried `flex: 1`, so a configured height was ignored (a 320px app painted as ~150px) and squeezed when the card was tight. The wrap is now `flex: none` in fixed mode (height is exact, the card body scrolls if the content no longer fits) and only `fill` mode opts into `flex: 1`.
+- **Tests**: `smoke.mjs` asserts the grip renders for fixed-height apps (and not for `fill`), and covers `patchTaskEmbedHeight` (clamping, no-op/fill/non-embed/bad-index rejection, immutability, round-trip through `sanitizeTaskBlocks`). `npm run verify:embed` now **replays the real gesture** in headless Chrome (`pointerdown` → `pointermove` → `pointerup`) and asserts the board card grew 220 → 360 with exactly one commit, plus the scaled-plane case (1.5× → 200 → 280 committed), and screenshots the result.
+- **内嵌网页大小可拖动调整**：内嵌应用下边缘新增拖动条，上下拖动即可改高度，跟手实时预览并显示当前像素值，松手一次性提交并持久化到该控件的 `height`（画布卡片会广播给协作者）；`fill` 模式不显示拖动条，改高度用卡片右下角手柄。手势按**布局像素**计算（`offsetHeight` + `rect/offset` 求缩放比），因此在缩放画布（0.2–2.5 倍）里拖动同样准确，也不受卡片入场动画 transform 影响；顺带修掉一个真实布局 bug——固定高度此前被 `flex:1` 覆盖/挤压（320px 实际只画出约 150px），现在高度严格等于设定值。
+
 ## v0.12.0
 
 - **Cards can associate other web apps / 卡片关联内嵌网页应用**: a new declarative `embed` control puts another web application inside a card as a sandboxed frame — `{ "kind": "embed", "url": "http://localhost:5173", "title": "本地应用", "height": 320, "fill": false }`.
