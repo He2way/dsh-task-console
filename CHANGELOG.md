@@ -4,6 +4,17 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.17.0
+
+- **A card's conversation refactor now targets exactly what its canvas holds / 对话重构的对象与画布内一致**: refactoring a card (the `💬` popup, a `[taskcard]` block in any conversation, the `✎` editor, or an embedded-app height drag) used to update the card only, leaving the card's canvas showing the controls from before. The card's canvas is now **reconciled** with the card after every such change:
+  - controls that the refactor removed lose their canvas item (and the deletion is broadcast to collaborators),
+  - surviving controls keep their item's **position and size** and take the new content and label — the `bid` is what survives, and the refactor prompt now explicitly tells the agent to echo existing `bid`s (and widget `key`s) so nothing jumps around,
+  - controls the refactor added get a fresh item placed under the existing ones.
+  - The same reconciliation runs the other way: editing a control on the plane relabels its item, writes it back to the card, and pulls in any extra controls the refactor produced, so "one control on the card" and "one item on the plane" always hold.
+  - Deleting a card (from the board or through `[taskcard] delete`) clears its canvas items instead of leaving ghost controls pointing at a card that no longer exists.
+- **Tests**: `smoke.mjs` asserts the reconciliation end to end — after a conversation refactor the card's control count equals the plane's bound item count, the echoed control keeps its exact `x`/`y` and takes the new content, the added control gets an item, the dropped one's item is gone, item labels follow their control, and deleting the card leaves zero bound items. `npm run verify:embed` performs the same refactor through `applyTaskCardSpec` in the real browser and asserts the plane DOM updated (3 items, kept control in place with its refreshed label) plus the screenshot.
+- **对话重构的对象内容和画布内保持一致**：以前用 `💬` 重构卡片（或任意会话里的 `[taskcard]`、`✎` 编辑器、拖动内嵌应用高度）只更新卡片，卡片画布上还是旧的控件。现在每次这类改动之后都会**把卡片画布与卡片对齐**：被删掉的控件其画布卡片一并移除（并广播给协作者）；保留的控件**位置与尺寸不变**，只更新内容与标签（靠 `bid` 识别，重构提示词现在也明确要求 AI 原样回传已有的 `bid` 与 `key`）；新增的控件会在已有控件下方生成新卡片。反向同样成立：在画布上改某个控件会写回卡片、刷新其标签，并把重构多出来的控件补进画布，因此「卡片上的控件」与「画布上的控件卡片」始终一一对应。删除卡片（面板或 `[taskcard] delete`）会清掉它的画布卡片，不再留下指向已删卡片的幽灵控件。
+
 ## v0.16.0
 
 - **A card's controls live on its own canvas / 卡片的控件就在它自己的画布上**: maximizing a user card no longer drops a single copy of the card onto the plane — it **unrolls the card into its controls**, one canvas item per control (laid out in two readable columns). Each item is a normal canvas card: drag it, resize it, edit it (`✎`), refactor it by talking (`💬`), open it fullscreen (`⛶`), duplicate it (`⧉`), send it to the board (`📥`) or delete it.

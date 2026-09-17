@@ -292,6 +292,31 @@ try {
   const orderAfter = blockKindsOf(appCardNode);
   log("REORDER before=" + orderBefore + " after=" + orderAfter);
 
+  // ---- a conversation refactor must reach the plane as well ----
+  const instanceKey = tc.canvasInstanceId(applied.id);
+  const boundInPage = () => Object.values(tc.canvasSnapshot().canvases[instanceKey].cards).filter((item) => tc.canvasCardBinding(item) !== null);
+  const headingItem = boundInPage().find((item) => item.blocks[0].kind === "heading");
+  const embedItem = boundInPage().find((item) => item.blocks[0].kind === "embed");
+  const refactor = tc.applyTaskCardSpec({
+    op: "upsert",
+    id: applied.id,
+    title: "全屏应用卡",
+    blocks: [
+      { ...headingItem.blocks[0], bid: headingItem.from.bid, text: "重构后的标题" },
+      embedItem.blocks[0],
+      { kind: "note", text: "重构新增的说明" },
+    ],
+  });
+  ReactDOM.flushSync(() => {});
+  const afterRefactor = boundInPage();
+  const keptItem = afterRefactor.find((item) => item.id === headingItem.id);
+  log("REFACTOR ok=" + refactor.ok +
+    " items=" + afterRefactor.length +
+    " kept=" + (keptItem !== void 0 && keptItem.blocks[0].text === "重构后的标题") +
+    " place=" + (keptItem !== void 0 && keptItem.x === headingItem.x && keptItem.y === headingItem.y) +
+    " domItems=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length +
+    " titles=" + afterRefactor.map((item) => item.title).sort().join("/"));
+
   // ---- fullscreen overlay from the control item that holds the embedded app ----
   const canvasCard = [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card")].find((node) => node.querySelector(".dsh-tc-app") !== null) ?? null;
   const fullButton = canvasCard === null ? null : buttonOf(canvasCard, "全屏显示");
@@ -433,6 +458,10 @@ const instanceOk = instance !== null &&
   reorder !== null &&
   reorder[1] !== reorder[2] &&
   reorder[1].startsWith("wHead|") &&
+  // a conversation refactor lands on the plane: kept control stays put (with its new
+  // label), the dropped one is gone, the added one appears — one item per control
+  /REFACTOR ok=true items=3 kept=true place=true domItems=3 titles=.*说明/.test(boardText) &&
+  boardText.includes("小标题 · 重构后的标题") &&
   boardText.includes("DERIVE items=4 apps=1");
 const fullOk = boardText.includes("BOARD cards=") &&
   full !== null &&

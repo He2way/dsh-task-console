@@ -870,6 +870,60 @@ check(
   tc.canvasRebuildInstance(instanceId, createdSpec.id) === 2 &&
     Object.values(tc.canvasSnapshot().canvases[instanceId].cards).filter((item) => tc.canvasCardBinding(item) !== null).length === 2
 );
+// ---- a conversation refactor must land on the canvas too (same controls both places) ----
+const boundNow = () => Object.values(tc.canvasSnapshot().canvases[instanceId].cards).filter((item) => tc.canvasCardBinding(item) !== null);
+const survivor = boundNow().sort((left, right) => left.y - right.y || left.x - right.x)[0];
+const survivorBid = survivor.from.bid;
+const survivorBlock = { ...survivor.blocks[0], bid: survivorBid };
+if (survivorBlock.kind === "checklist") survivorBlock.items = [...survivorBlock.items, { id: "c", label: "发公告" }];
+const refactored = tc.applyTaskCardSpec({
+  op: "upsert",
+  id: createdSpec.id,
+  title: "发布清单",
+  blocks: [
+    // the AI echoes the existing bid → the plane keeps that item's place
+    survivorBlock,
+    { kind: "progress", label: "进度", value: 1, max: 3 },
+  ],
+});
+const afterRefactor = boundNow();
+const keptItem = afterRefactor.find((item) => item.id === survivor.id);
+check(
+  "a conversation refactor keeps the card's canvas in step",
+  refactored.ok === true &&
+    afterRefactor.length === 2 &&
+    keptItem !== void 0 &&
+    keptItem.x === survivor.x &&
+    keptItem.y === survivor.y &&
+    afterRefactor.some((item) => item.blocks[0].kind === "progress") &&
+    afterRefactor.every((item) => item.from.card === createdSpec.id) &&
+    // one item per control, no leftovers from the controls the refactor dropped
+    afterRefactor.length === tc.snapshotTaskCards().cards[createdSpec.id].blocks.length
+);
+check(
+  "canvas item labels follow their control after a refactor",
+  afterRefactor.every((item) => item.title === tc.taskBlockLabel(item.blocks[0])) &&
+    afterRefactor.some((item) => item.title.indexOf("进度") === 0)
+);
+check(
+  "every control on the card has exactly one canvas item",
+  tc.snapshotTaskCards().cards[createdSpec.id].blocks.length === boundNow().length &&
+    tc.snapshotTaskCards().cards[createdSpec.id].blocks.every((block) => boundNow().some((item) => item.from.bid === block.bid))
+);
+const relabelled = boundNow().find((item) => item.blocks[0].kind === "progress");
+check(
+  "editing a control on the plane relabels its item",
+  tc.canvasPushBinding(instanceId, { ...relabelled, blocks: [{ kind: "note", text: "换成说明", bid: relabelled.from.bid }] }) === true &&
+    tc.canvasSnapshot().canvases[instanceId].cards[relabelled.id].title.indexOf("说明") === 0 &&
+    tc.snapshotTaskCards().cards[createdSpec.id].blocks.some((block) => block.text === "换成说明")
+);
+const beforeUnbind = boundNow().length;
+tc.applyTaskCardSpec({ op: "delete", id: createdSpec.id });
+check(
+  "deleting the card clears its canvas items",
+  beforeUnbind > 0 &&
+    Object.values(tc.canvasSnapshot().canvases[instanceId].cards).filter((item) => tc.canvasCardBinding(item) !== null).length === 0
+);
 const duplicatedId = tc.canvasDuplicateCard(instanceId, seeded[1]);
 check(
   "instance cards can be duplicated in place (a copy is unbound)",
