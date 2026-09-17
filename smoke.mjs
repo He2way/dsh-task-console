@@ -1135,15 +1135,16 @@ check(
 );
 const chatDockHtml = renderToString(jsx(tc.CanvasChatDock, { canvas: chatCanvasNow, canvasId: chatCanvas.id, onApply: () => null }));
 check(
-  "the canvas chat dock is a narrow floating panel",
+  "the canvas chat dock is a narrow centred floating panel",
   chatDockHtml.includes("dsh-tc-canvasChat") &&
     chatDockHtml.includes("dsh-tc-canvasChatHead") &&
     chatDockHtml.includes("画布对话") &&
     chatDockHtml.includes("一句话改画布") &&
     chatDockHtml.includes("发送") &&
-    // it is a floating overlay, not a full-width docked bar
-    styleTags[0].textContent.includes(".dsh-tc-canvasChat{position:absolute;right:16px;bottom:16px;z-index:40") &&
+    // a floating overlay, centred horizontally above the bottom edge
+    styleTags[0].textContent.includes(".dsh-tc-canvasChat{position:absolute;left:0;right:0;bottom:16px;margin:0 auto;z-index:40") &&
     styleTags[0].textContent.includes("width:340px") &&
+    styleTags[0].textContent.includes("@keyframes dsh-tc-chat-in{from{opacity:0;transform:translateY(14px)}") &&
     styleTags[0].textContent.includes(".dsh-tc-canvasChatMini{width:auto;border-radius:999px}") &&
     styleTags[0].textContent.includes(".dsh-tc-chatPill{")
 );

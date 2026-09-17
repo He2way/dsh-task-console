@@ -372,10 +372,11 @@ try {
       const dockBox = dock === null ? null : dock.getBoundingClientRect();
       const view = document.querySelector(".dsh-tc-canvasView");
       const viewBox = view === null ? null : view.getBoundingClientRect();
+      const centerOffset = dockBox === null || viewBox === null ? -1 : Math.round((dockBox.left + dockBox.width / 2) - (viewBox.left + viewBox.width / 2));
       log("CHAT input=" + (chatInput !== null) + " send=" + (chatSend !== null) +
         " placeholder=" + (chatInput === null ? "none" : (chatInput.getAttribute("placeholder") || "")) +
         " dockW=" + (dockBox === null ? -1 : Math.round(dockBox.width)) +
-        " gapRight=" + (dockBox === null || viewBox === null ? -1 : Math.round(viewBox.right - dockBox.right)) +
+        " centerOffset=" + centerOffset +
         " gapBottom=" + (dockBox === null || viewBox === null ? -1 : Math.round(viewBox.bottom - dockBox.bottom)) +
         " floating=" + (dockBox !== null && viewBox !== null && dockBox.width < viewBox.width * 0.5) +
         " bareBefore=" + beforeChat +
@@ -536,9 +537,9 @@ const instanceOk = instance !== null &&
   /REFACTOR ok=true items=3 kept=true place=true domItems=3 titles=.*说明/.test(boardText) &&
   boardText.includes("小标题 · 重构后的标题") &&
   // the canvas chat dock exists and a [canvas] op list edits the plane (rename + note too)
-  // the canvas chat is a narrow floating panel (340px, inset 16px) and a [canvas] op
-  // list edits the plane (rename + note too)
-  /CHAT input=true send=true placeholder=一句话改画布… dockW=34[02] gapRight=16 gapBottom=16 floating=true bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText) &&
+  // the canvas chat is a narrow centred floating panel (340px, 16px above the bottom)
+  // and a [canvas] op list edits the plane (rename + note too)
+  /CHAT input=true send=true placeholder=一句话改画布… dockW=34[02] centerOffset=0 gapBottom=16 floating=true bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText) &&
   // any control can be added straight onto the plane, then dragged by its own toolbar
   /ADD menu=true chips=18 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText) &&
   // the bare control followed the pointer by exactly the dispatched delta

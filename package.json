@@ -1,6 +1,6 @@
 {
   "name": "dsh-task-console",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "DSH client plugin — flip to the back of the page for a floating glass task console: live background jobs, subagents, session overview and workspace of the current session, with mouse-draggable and mouse-resizable cards (bottom-right handle, size persisted per card). Maximizing a card unrolls its controls onto the card's own canvas, where every control is a draggable, editable item and the board card stays a live thumbnail whose control order follows that arrangement; built-in cards open as a fullscreen view. The top-right card conversation calls a temporary agent session to refactor each card's style and internal controls from natural language, and any conversation can author cards via [taskcard] blocks (text/heading/note/stats/progress/trend/kv/links/chips/checklist/counter/button/table/code/toggle/countdown/bars/image/embed). Cards can associate other web apps as sandboxed embedded frames (http(s) only, fixed or card-filling) whose height is dragged straight on the app's bottom edge — accurate on the zoomed canvas too — be published as copies onto a fullscreen infinite canvas with named boards, share strings and a zero-dependency WebSocket relay for multi-user editing, and a right-hand dock renders the project's archify architecture diagram (embedded, sandboxed, resizable).",
   "type": "module",
   "main": "lib/index.js",

@@ -4,6 +4,12 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.21.0
+
+- **The canvas chat is centred / 画布对话框居中**: the floating panel now sits **horizontally centred 16px above the bottom edge** (`left:0; right:0; margin:0 auto`) instead of pinned to the right corner, so it reads like a command bar under the plane; its mini pill centres itself too, and the entry animation is now a short rise from the bottom (`translateY(14px)`) instead of a sideways slide that would fight the centring.
+- **Tests**: `smoke.mjs` asserts the centred floating contract (`left/right:0`, `margin:0 auto`, `bottom:16px`, `width:340px`, the rise animation, the pill rule). `npm run verify:embed` measures it in the real browser: **`dockW=342 centerOffset=0 gapBottom=16 floating=true`** — exactly centred (0px offset), 16px above the bottom, well under half the viewport.
+- **画布对话框居中**：悬浮面板从右下角改为**底部水平居中**（`left:0; right:0; margin:0 auto`，距底 16px），看起来像画布下方的一条指令栏；收成的小胶囊同样居中，入场动画也改成从下方轻微上浮（`translateY(14px)`），不再和居中的位移冲突。浏览器实测：`dockW=342 centerOffset=0 gapBottom=16`。
+
 ## v0.20.0
 
 - **The canvas chat is now a narrow floating panel / 画布对话框改为收窄的悬浮样式**: the canvas conversation used to be a full-width bar docked to the bottom edge; it is now a **340px floating glass card in the bottom-right corner** (16px inset, above the plane), so the canvas keeps almost all of its area and the chat is always where the eye already is.
