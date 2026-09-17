@@ -317,6 +317,38 @@ try {
     " domItems=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length +
     " titles=" + afterRefactor.map((item) => item.title).sort().join("/"));
 
+  // ---- add any control straight onto the plane (no card around it) ----
+  const addButton = [...document.querySelectorAll(".dsh-tc-canvasBar .dsh-tc-btn")].find((node) => (node.textContent || "").indexOf("+ 控件") === 0) ?? null;
+  if (addButton !== null) addButton.click();
+  ReactDOM.flushSync(() => {});
+  const chips = [...document.querySelectorAll(".dsh-tc-addChip")];
+  const counterChip = chips.find((node) => (node.textContent || "") === "计数") ?? null;
+  if (counterChip !== null) counterChip.click();
+  ReactDOM.flushSync(() => {});
+  const bareItems = [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare")];
+  const counterItem = bareItems[bareItems.length - 1] ?? null;
+  const counterCard = counterItem === null ? null : tc.canvasSnapshot().canvases[instanceKey].cards[counterItem.getAttribute("data-id") || ""];
+  log("ADD menu=" + (addButton !== null) + " chips=" + chips.length +
+    " bare=" + bareItems.length +
+    " kind=" + (counterItem === null ? "none" : counterItem.getAttribute("data-kind")) +
+    " noCardChrome=" + (counterItem !== null && counterItem.querySelector(".dsh-tc-cardHead") === null) +
+    " hasCounter=" + (counterItem !== null && counterItem.querySelector(".dsh-tc-count") !== null));
+
+  // dragging a bare control by its toolbar moves it on the plane
+  const beforeBareMove = counterItem === null ? null : { left: counterItem.style.left, top: counterItem.style.top };
+  const bareGrip = counterItem === null ? null : counterItem.querySelector(".dsh-tc-bareTools");
+  if (bareGrip !== null && bareGrip !== undefined && counterItem !== null) {
+    const box = bareGrip.getBoundingClientRect();
+    const pointer = (type, clientX, clientY) => new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: 1, pointerId: 9, pointerType: "mouse", clientX, clientY
+    });
+    bareGrip.dispatchEvent(pointer("pointerdown", box.left + 10, box.top + 8));
+    bareGrip.dispatchEvent(pointer("pointermove", box.left + 130, box.top + 68));
+    bareGrip.dispatchEvent(pointer("pointerup", box.left + 130, box.top + 68));
+  }
+  ReactDOM.flushSync(() => {});
+  log("BAREDRAG before=" + JSON.stringify(beforeBareMove) + " after=" + JSON.stringify(counterItem === null ? null : { left: counterItem.style.left, top: counterItem.style.top }));
+
   // ---- fullscreen overlay from the control item that holds the embedded app ----
   const canvasCard = [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card")].find((node) => node.querySelector(".dsh-tc-app") !== null) ?? null;
   const fullButton = canvasCard === null ? null : buttonOf(canvasCard, "全屏显示");
@@ -346,6 +378,7 @@ try {
   if (duplicate !== null) duplicate.click();
   ReactDOM.flushSync(() => {});
   log("DERIVE items=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length +
+    " bare=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare").length +
     " apps=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-app").length);
 } catch (error) {
   log("ERROR " + (error && error.message ? error.message : String(error)));
@@ -441,6 +474,7 @@ const full = /FULL overlay=(\w+) shell=(-?\d+) app=(-?\d+) frame=(-?\d+) appFill
 const shellHeight = full === null ? -1 : Number(full[2]);
 const frameHeight = full === null ? -1 : Number(full[4]);
 const viewportHeight = full === null ? -1 : Number(full[7]);
+const bareMove = /BAREDRAG before=\{"left":"(-?\d+)px","top":"(-?\d+)px"\} after=\{"left":"(-?\d+)px","top":"(-?\d+)px"\}/.exec(boardText);
 const instanceOk = instance !== null &&
   instance[1] === "true" &&
   instance[2] === "副本画布" &&
@@ -462,7 +496,13 @@ const instanceOk = instance !== null &&
   // label), the dropped one is gone, the added one appears — one item per control
   /REFACTOR ok=true items=3 kept=true place=true domItems=3 titles=.*说明/.test(boardText) &&
   boardText.includes("小标题 · 重构后的标题") &&
-  boardText.includes("DERIVE items=4 apps=1");
+  // any control can be added straight onto the plane, then dragged by its own toolbar
+  /ADD menu=true chips=18 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText) &&
+  // the bare control followed the pointer by exactly the dispatched delta
+  bareMove !== null &&
+  Number(bareMove[3]) === Number(bareMove[1]) + 120 &&
+  Number(bareMove[4]) === Number(bareMove[2]) + 60 &&
+  boardText.includes("DERIVE items=4 bare=1 apps=1");
 const fullOk = boardText.includes("BOARD cards=") &&
   full !== null &&
   full[1] === "true" &&

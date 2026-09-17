@@ -4,6 +4,18 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.18.0
+
+- **The canvas is no longer only cards: put any control on it / 画布上可以直接放任何控件**: `+ 控件` in the canvas bar drops **any control straight onto the plane with no card around it** — 18 kinds (text, heading, note, stats, progress, trend, key-values, links, chips, checklist, counter, button, table, code, toggle, countdown, bars, embedded web app), each with usable starter content.
+  - A bare control is dragged by its hover toolbar (or by any non-interactive part of itself), resized from its own corner grip, edited with `✎`, refactored by talking (`💬`), duplicated (`⧉`), sent to the board (`📥`, as a card) and deleted (`🗑`); while the toolbar is shown it also labels the control (`清单 · 跑测试`).
+  - `✎` opens a **control editor**: a plain field for the kinds with one obvious text (`text`/`heading`/`note`/`code`/`progress`/`label` kinds), an address field for embedded apps and images, and a **raw-JSON editor** for everything else — both go through the same `sanitizeTaskBlock` validation, so a control can never be saved in a state the client cannot render.
+  - `▢`/`▣` flips any single-control item between the card look and the bare look in **both** directions, so a card's exploded control can become a free-floating control and vice versa.
+  - Pasted or dropped images now arrive as **bare image controls** (previously a whole image card), and the `+ 控件` menu deliberately leaves images out because they need real data.
+  - Bare controls are normal canvas items: they persist, sync over the relay and stay bound to their card when they came from one (edits still write back, deleting still removes the control, and dragging them still re-orders the card).
+- **Fixed a gesture robustness bug found while verifying this**: the new bare-control drag computed its position inside `requestAnimationFrame` only, so a throttled or skipped frame (background tab, reduced motion) could drop the drag entirely; the pointer handler now updates the gesture state synchronously and only *paints* in rAF (the board and canvas card gestures already worked this way).
+- **Tests**: `smoke.mjs` covers the menu (18 kinds, every default sanitizes, `image` intentionally absent and rejected), adding a control without a card (position, `bare`, single block, generated `bid`, no binding), persistence (`bare` survives a sanitize round-trip), duplication, in-place editing plus an invalid-edit rejection, wrapping/unwrapping, the bare renderer's markup (control present, no card header/body chrome) and the quick editor (simple field, JSON fallback). `npm run verify:embed` clicks `+ 控件` → 计数 in the real canvas, asserts a bare counter with no card chrome, **drags it by its toolbar and checks it moved by exactly the dispatched delta**, then screenshots the plane.
+- **画布自由度更高：可以直接加任何控件**：画布工具条新增 `+ 控件`，把任意控件**直接放到画布上，外面不套卡片**（文本/小标题/说明/统计/进度/趋势/键值/链接/标签/清单/计数/按钮/表格/代码/开关/倒计时/条形图/网页应用，共 18 种，每种都带可直接用的初始内容）。裸控件用悬停工具条拖动（或拖它自己的非交互区域）、右下角缩放、`✎` 编辑、`💬` 对话重构、`⧉` 复制、`📥` 发回任务台、`🗑` 删除；`✎` 打开的是**控件编辑器**：结构简单的控件给一个文本框，应用/图片给地址框，其它一律给**原始 JSON 编辑**（都走同一套校验，绝不会存成渲染不出来的状态）。`▢/▣` 可以在「卡片外观」和「裸控件」之间双向切换；粘贴/拖入的图片现在直接变成裸图片控件。另外修掉一个新发现的交互健壮性问题：裸控件的拖动曾经只在 `requestAnimationFrame` 里计算位置，掉帧（后台标签页、减少动效）时拖动会整个丢失——现在指针事件里同步更新状态、rAF 只负责绘制。
+
 ## v0.17.0
 
 - **A card's conversation refactor now targets exactly what its canvas holds / 对话重构的对象与画布内一致**: refactoring a card (the `💬` popup, a `[taskcard]` block in any conversation, the `✎` editor, or an embedded-app height drag) used to update the card only, leaving the card's canvas showing the controls from before. The card's canvas is now **reconciled** with the card after every such change:

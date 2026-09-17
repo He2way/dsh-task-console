@@ -972,9 +972,88 @@ check(
     instanceHtml.includes("删除画布") === false
 );
 
-const canvas = tc.canvasCreate("测试画布");
-const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });
+// ---- any control can be added straight onto a canvas ----
 check(
+  "every offered kind can actually be created",
+  tc.TASK_CANVAS_ADD_KINDS.length >= 18 &&
+    tc.TASK_CANVAS_ADD_KINDS.includes("embed") &&
+    tc.TASK_CANVAS_ADD_KINDS.includes("checklist") &&
+    tc.TASK_CANVAS_ADD_KINDS.includes("bars") &&
+    // images need real data, so they arrive by paste/drop instead of the menu
+    tc.TASK_CANVAS_ADD_KINDS.includes("image") === false &&
+    tc.TASK_CANVAS_ADD_KINDS.every((kind) => tc.sanitizeTaskBlocks([tc.taskBlockDefault(kind)]).length === 1) &&
+    tc.canvasAddControl(tc.canvasCreate("菜单画布").id, "image", 10, 10) === null
+);
+const bareCanvas = tc.canvasCreate("控件画布");
+const bareId = tc.canvasAddControl(bareCanvas.id, "checklist", 120, 80);
+const bareItem = tc.canvasSnapshot().canvases[bareCanvas.id].cards[bareId];
+check(
+  "a control can be added without a card around it",
+  bareId !== null &&
+    bareItem.bare === true &&
+    bareItem.x === 120 &&
+    bareItem.y === 80 &&
+    bareItem.blocks.length === 1 &&
+    bareItem.blocks[0].kind === "checklist" &&
+    bareItem.blocks[0].items.length === 2 &&
+    typeof bareItem.blocks[0].bid === "string" &&
+    bareItem.title.indexOf("清单") === 0 &&
+    bareItem.from === void 0
+);
+check(
+  "bare controls survive persistence and can be duplicated",
+  tc.sanitizeCanvasCard({ id: "cc-x", bare: true, blocks: [{ kind: "note", text: "n" }] }, "cc-x").bare === true &&
+    tc.sanitizeCanvasCard({ id: "cc-y", blocks: [{ kind: "note", text: "n" }] }, "cc-y").bare === void 0
+);
+const bareCopyId = tc.canvasDuplicateCard(bareCanvas.id, bareItem);
+check("a duplicated bare control stays bare", tc.canvasSnapshot().canvases[bareCanvas.id].cards[bareCopyId].bare === true);
+check(
+  "editing a bare control replaces it in place",
+  tc.canvasUpdateControl(bareCanvas.id, bareItem, { ...bareItem.blocks[0], items: [{ id: "a", label: "只剩一项" }, { id: "b", label: "第二项" }] }).ok === true &&
+    tc.canvasSnapshot().canvases[bareCanvas.id].cards[bareId].blocks[0].items.length === 2 &&
+    tc.canvasSnapshot().canvases[bareCanvas.id].cards[bareId].blocks[0].items[0].label === "只剩一项" &&
+    tc.canvasUpdateControl(bareCanvas.id, bareItem, { kind: "embed", url: "javascript:alert(1)" }).ok === false
+);
+check(
+  "a bare control can be wrapped back into a card and vice versa",
+  tc.canvasSetBare(bareCanvas.id, tc.canvasSnapshot().canvases[bareCanvas.id].cards[bareId], false) === true &&
+    tc.canvasSnapshot().canvases[bareCanvas.id].cards[bareId].bare === void 0 &&
+    tc.canvasSetBare(bareCanvas.id, tc.canvasSnapshot().canvases[bareCanvas.id].cards[bareId], true) === true &&
+    tc.canvasSnapshot().canvases[bareCanvas.id].cards[bareId].bare === true
+);
+const bareHtml = renderToString(jsx(tc.CanvasControlView, {
+  card: { id: "cc-1", title: "清单", bare: true, x: 10, y: 20, w: 340, blocks: [{ kind: "checklist", key: "k", bid: "blk-1", items: [{ id: "a", label: "A" }] }] },
+  onMove: () => {}, onResize: () => {}, onEdit: () => {}, onChat: () => {}, onDelete: () => {},
+  onWidgetState: () => {}, onBlockResize: () => {}, onDuplicate: () => {}, onBoard: () => {}, onToggleBare: () => {},
+}));
+check(
+  "a bare control renders the control itself plus a hover toolbar",
+  bareHtml.includes("dsh-tc-bare") &&
+    bareHtml.includes("dsh-tc-bareTools") &&
+    bareHtml.includes("dsh-tc-bareGrip") &&
+    bareHtml.includes("清单") &&
+    bareHtml.includes("dsh-tc-bareResize") &&
+    // the control is rendered directly: no card header/body chrome
+    bareHtml.includes("dsh-tc-cardHead") === false &&
+    bareHtml.includes("dsh-tc-cardBody") === false &&
+    bareHtml.includes("dsh-tc-check")
+);
+const quickHtml = renderToString(jsx(tc.TaskBlockQuickEdit, {
+  block: { kind: "progress", label: "进度", value: 1, max: 3, bid: "blk-2" },
+  onSave: () => {}, onCancel: () => {},
+}));
+check(
+  "quick editor edits the simple field and offers raw JSON",
+  quickHtml.includes("编辑控件 · 进度") &&
+    quickHtml.includes("JSON 编辑") &&
+    quickHtml.includes('value="进度"')
+);
+check("quick editor falls back to JSON for structural controls", renderToString(jsx(tc.TaskBlockQuickEdit, { block: { kind: "table", columns: ["A"], rows: [["1"]] }, onSave: () => {}, onCancel: () => {} })).includes("控件 JSON"));
+const addPanelHtml = renderToString(jsx(tc.TaskCanvasView, { onClose: () => {} }));
+check("canvas view offers the add-control entry", addPanelHtml.includes("+ 控件"));
+
+const canvas = tc.canvasCreate("测试画布");
+const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });check(
   "canvas publish adds a copy into the active canvas",
   tc.canvasSnapshot().canvases[canvas.id] !== void 0 &&
     tc.canvasSnapshot().canvases[published.canvasId].cards[published.cardId] !== void 0
