@@ -229,9 +229,18 @@ try {
   };
   const useSessions = (selector) => selector(STATE);
   const url = "http://127.0.0.1:${PORT}/";
-  // Create the app card in the store before mounting the panel: the panel reads the
-  // store in its state initializer, so no extra render tick is needed here.
-  const applied = tc.applyTaskCardSpec({ op: "upsert", title: "全屏应用卡", blocks: [{ kind: "embed", url, title: "本地应用 · 全屏", fill: true }] });
+  // Create the card in the store before mounting the panel: the panel reads the store in
+  // its state initializer, so no extra render tick is needed here. Three controls so the
+  // explosion (one canvas item per control) and the drag-reordering can be observed.
+  const applied = tc.applyTaskCardSpec({
+    op: "upsert",
+    title: "全屏应用卡",
+    blocks: [
+      { kind: "heading", text: "发版前" },
+      { kind: "checklist", key: "todo", items: [{ id: "a", label: "跑测试" }, { id: "b", label: "更新文档" }] },
+      { kind: "embed", url, title: "本地应用 · 全屏", fill: true }
+    ]
+  });
   ReactDOM.flushSync(() => {
     ReactDOM.createRoot(document.getElementById("board")).render(jsx(tc.TaskBackPanel, { useSessions, onClose: () => {}, plugins: undefined }));
   });
@@ -243,25 +252,49 @@ try {
   const appCardNode = cardOf("全屏应用卡");
   log("BOARD cards=" + cards.length + " applied=" + JSON.stringify(applied) + " titles=" + titles.join("|"));
 
-  // ---- maximize a user card: it becomes its own canvas instance ("副本") ----
+  // ---- maximize a user card: its controls unroll onto its own canvas ("副本") ----
+  const blockKindsOf = (card) => (card === undefined ? "?" : [...card.querySelectorAll(".dsh-tc-blocks > *")].map((node) => node.className.replace(/dsh-tc-|\\s.*/g, "")).join("|"));
+  const orderBefore = blockKindsOf(appCardNode);
   const maximize = buttonOf(appCardNode, "最大化");
   if (maximize !== null) maximize.click();
   ReactDOM.flushSync(() => {});
   const view = document.querySelector(".dsh-tc-canvasView");
   const barTitle = document.querySelector(".dsh-tc-canvasBarTitle");
   const barText = view === null ? "" : view.querySelector(".dsh-tc-canvasBar").textContent;
-  const planeCards = document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length;
+  const planeItems = [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card")];
   const planeApps = document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-app").length;
+  const bound = tc.canvasSnapshot().canvases[tc.canvasInstanceId(applied.id)];
+  const boundItems = bound === undefined ? [] : Object.values(bound.cards).filter((item) => tc.canvasCardBinding(item) !== null);
   log("INSTANCE view=" + (view !== null) +
     " title=" + (barTitle === null ? "none" : barTitle.textContent) +
-    " cards=" + planeCards + " apps=" + planeApps +
+    " items=" + planeItems.length + " apps=" + planeApps +
+    " bound=" + boundItems.length +
+    " oneControlEach=" + boundItems.every((item) => item.blocks.length === 1) +
     " sourceCopy=" + (barText.indexOf("放入源卡副本") !== -1) +
+    " rebuild=" + (barText.indexOf("重新展开控件") !== -1) +
     " backToBoard=" + (barText.indexOf("返回任务台") !== -1) +
     " hasNewCanvas=" + (barText.indexOf("新画布") !== -1));
 
-  // ---- fullscreen overlay from a card inside the instance ----
-  const canvasCard = document.querySelector(".dsh-tc-canvasPlane .dsh-tc-card");
-  const fullButton = buttonOf(canvasCard, "全屏显示");
+  // ---- drag a control on the plane: the card's control order follows it ----
+  const firstItem = planeItems[0];
+  const itemHeader = firstItem === undefined ? null : firstItem.querySelector(".dsh-tc-cardHead");
+  if (itemHeader !== null && itemHeader !== undefined) {
+    const box = itemHeader.getBoundingClientRect();
+    const pointer = (type, clientY) => new PointerEvent(type, {
+      bubbles: true, cancelable: true, button: 0, buttons: 1, pointerId: 7, pointerType: "mouse",
+      clientX: box.left + 24, clientY
+    });
+    itemHeader.dispatchEvent(pointer("pointerdown", box.top + 8));
+    itemHeader.dispatchEvent(pointer("pointermove", box.top + 8 + 640));
+    itemHeader.dispatchEvent(pointer("pointerup", box.top + 8 + 640));
+  }
+  ReactDOM.flushSync(() => {});
+  const orderAfter = blockKindsOf(appCardNode);
+  log("REORDER before=" + orderBefore + " after=" + orderAfter);
+
+  // ---- fullscreen overlay from the control item that holds the embedded app ----
+  const canvasCard = [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card")].find((node) => node.querySelector(".dsh-tc-app") !== null) ?? null;
+  const fullButton = canvasCard === null ? null : buttonOf(canvasCard, "全屏显示");
   if (fullButton !== null) fullButton.click();
   ReactDOM.flushSync(() => {});
   const overlay = document.querySelector(".dsh-tc-full");
@@ -287,7 +320,7 @@ try {
   const duplicate = planeCard === null ? null : buttonOf(planeCard, "复制这张卡片");
   if (duplicate !== null) duplicate.click();
   ReactDOM.flushSync(() => {});
-  log("DERIVE cards=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length +
+  log("DERIVE items=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length +
     " apps=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-app").length);
 } catch (error) {
   log("ERROR " + (error && error.message ? error.message : String(error)));
@@ -377,7 +410,8 @@ const ok = text.includes("apps=4") &&
   Math.abs(zoomAfter - (zoomBefore + Math.round(120 / zoomScale))) <= 1 &&
   zoomCommitted.cardId === "usr-d" &&
   zoomCommitted.height === zoomAfter;
-const instance = /INSTANCE view=(\w+) title=(\S+) cards=(\d+) apps=(\d+) sourceCopy=(\w+) backToBoard=(\w+) hasNewCanvas=(\w+)/.exec(boardText);
+const instance = /INSTANCE view=(\w+) title=(\S+) items=(\d+) apps=(\d+) bound=(\d+) oneControlEach=(\w+) sourceCopy=(\w+) rebuild=(\w+) backToBoard=(\w+) hasNewCanvas=(\w+)/.exec(boardText);
+const reorder = /REORDER before=(\S+) after=(\S+)/.exec(boardText);
 const full = /FULL overlay=(\w+) shell=(-?\d+) app=(-?\d+) frame=(-?\d+) appFill=(\w+) viewport=(\d+)x(\d+) hint=(.*)/.exec(boardText);
 const shellHeight = full === null ? -1 : Number(full[2]);
 const frameHeight = full === null ? -1 : Number(full[4]);
@@ -385,13 +419,21 @@ const viewportHeight = full === null ? -1 : Number(full[7]);
 const instanceOk = instance !== null &&
   instance[1] === "true" &&
   instance[2] === "副本画布" &&
-  instance[3] === "1" &&
+  // one canvas item per control, one of them holding the embedded app
+  instance[3] === "3" &&
   instance[4] === "1" &&
-  instance[5] === "true" &&
+  instance[5] === "3" &&
   instance[6] === "true" &&
+  instance[7] === "true" &&
+  instance[8] === "true" &&
+  instance[9] === "true" &&
   // instance mode hides the normal canvas management controls
-  instance[7] === "false" &&
-  boardText.includes("DERIVE cards=2 apps=2");
+  instance[10] === "false" &&
+  // dragging a control on the plane reorders it on the board card (thumbnail mapping)
+  reorder !== null &&
+  reorder[1] !== reorder[2] &&
+  reorder[1].startsWith("wHead|") &&
+  boardText.includes("DERIVE items=4 apps=1");
 const fullOk = boardText.includes("BOARD cards=") &&
   full !== null &&
   full[1] === "true" &&

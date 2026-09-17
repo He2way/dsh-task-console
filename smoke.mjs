@@ -805,52 +805,110 @@ check(
 );
 check("share string rejects foreign text", tc.decodeCanvasShare("hello") === null);
 
-// ---- card maximize -> its own canvas instance ("副本") ----
-const instanceSource = { id: "usr-9", title: "发布清单", blocks: [{ kind: "checklist", key: "todo", items: [{ id: "a", label: "A" }] }, { kind: "embed", url: "http://localhost:5173/", title: "本地应用", height: 300, fill: false }], style: { accent: "emerald", icon: "🚀" } };
+// ---- card maximize -> its own canvas holding the card's controls ("副本") ----
 check("instance canvas id is derived from the card id", tc.canvasInstanceId("usr-9") === "cv-inst-usr-9" && tc.isCanvasInstance("cv-inst-usr-9") === true && tc.isCanvasInstance("cv1abc") === false);
+const createdSpec = tc.applyTaskCardSpec({
+  op: "upsert",
+  title: "发布清单",
+  blocks: [
+    { kind: "heading", text: "发版前" },
+    { kind: "checklist", key: "todo", items: [{ id: "a", label: "跑测试" }, { id: "b", label: "更新文档" }] },
+    { kind: "embed", url: "http://localhost:5173/", title: "本地应用", height: 300, fill: false },
+  ],
+  style: { accent: "emerald", icon: "🚀" },
+});
+const instanceSource = { ...tc.snapshotTaskCards().cards[createdSpec.id], id: createdSpec.id };
 const activeBefore = tc.canvasSnapshot().activeId;
 const instanceId = tc.canvasOpenInstance(instanceSource);
 const instanceCanvas = tc.canvasSnapshot().canvases[instanceId];
 const seeded = Object.values(instanceCanvas.cards);
 check(
-  "maximizing a card creates a seeded instance canvas",
-  instanceId === "cv-inst-usr-9" &&
+  "maximizing a card unrolls its controls onto its own canvas",
+  instanceId === "cv-inst-" + createdSpec.id &&
     instanceCanvas.name === "副本 · 发布清单" &&
-    seeded.length === 1 &&
-    seeded[0].title === "发布清单" &&
-    seeded[0].blocks.length === 2 &&
-    seeded[0].blocks[1].kind === "embed" &&
-    seeded[0].style.accent === "emerald" &&
-    seeded[0].id !== instanceSource.id
+    seeded.length === 3 &&
+    seeded.every((item) => item.blocks.length === 1 && item.from !== void 0 && item.from.card === createdSpec.id) &&
+    seeded.map((item) => item.blocks[0].kind).sort().join(",") === "checklist,embed,heading" &&
+    seeded.some((item) => item.title.indexOf("网页应用") === 0) &&
+    seeded.every((item) => typeof item.from.bid === "string" && item.from.bid.length > 0)
+);
+check(
+  "the exploded controls are stamped onto the card itself",
+  tc.snapshotTaskCards().cards[createdSpec.id].blocks.every((block) => typeof block.bid === "string") &&
+    new Set(seeded.map((item) => item.from.bid)).size === 3
 );
 check("entering an instance does not steal the active canvas seat", tc.canvasSnapshot().activeId === activeBefore);
 check(
   "re-entering the same card reuses its instance",
-  tc.canvasOpenInstance(instanceSource) === instanceId && Object.keys(tc.canvasSnapshot().canvases[instanceId].cards).length === 1
+  tc.canvasOpenInstance(instanceSource) === instanceId && Object.keys(tc.canvasSnapshot().canvases[instanceId].cards).length === 3
 );
-const duplicatedId = tc.canvasDuplicateCard(instanceId, seeded[0]);
+// Dragging a control on the plane re-orders the control on the board card (thumbnail mapping).
+const ordered = [...seeded].sort((left, right) => left.y - right.y || left.x - right.x);
+const moved = ordered[0];
+tc.canvasUpsertCard(instanceId, { ...moved, y: ordered[ordered.length - 1].y + 500 }, true);
 check(
-  "instance cards can be duplicated in place",
+  "dragging a control on the canvas reorders it on the card",
+  tc.canvasSyncBlockOrder(instanceId, createdSpec.id) === true &&
+    tc.snapshotTaskCards().cards[createdSpec.id].blocks[tc.snapshotTaskCards().cards[createdSpec.id].blocks.length - 1].bid === moved.from.bid
+);
+// Editing a control on the plane writes that control back onto the card.
+const firstBid = tc.snapshotTaskCards().cards[createdSpec.id].blocks[0].bid;
+check(
+  "editing a control on the canvas updates the card",
+  tc.canvasWriteBackBlock(createdSpec.id, firstBid, [{ kind: "note", text: "改过的说明", bid: firstBid }]) === true &&
+    tc.snapshotTaskCards().cards[createdSpec.id].blocks[0].kind === "note" &&
+    tc.snapshotTaskCards().cards[createdSpec.id].blocks[0].text === "改过的说明"
+);
+check("no-op write-backs are ignored", tc.canvasWriteBackBlock(createdSpec.id, firstBid, [{ kind: "note", text: "改过的说明", bid: firstBid }]) === false);
+check(
+  "deleting a bound control removes it from the card",
+  tc.canvasRemoveBoundBlock({ from: { card: createdSpec.id, bid: firstBid } }) === true &&
+    tc.snapshotTaskCards().cards[createdSpec.id].blocks.length === 2
+);
+check(
+  "re-unrolling replaces the bound control items",
+  tc.canvasRebuildInstance(instanceId, createdSpec.id) === 2 &&
+    Object.values(tc.canvasSnapshot().canvases[instanceId].cards).filter((item) => tc.canvasCardBinding(item) !== null).length === 2
+);
+const duplicatedId = tc.canvasDuplicateCard(instanceId, seeded[1]);
+check(
+  "instance cards can be duplicated in place (a copy is unbound)",
   duplicatedId !== null &&
-    duplicatedId !== seeded[0].id &&
-    Object.keys(tc.canvasSnapshot().canvases[instanceId].cards).length === 2 &&
-    tc.canvasSnapshot().canvases[instanceId].cards[duplicatedId].x === seeded[0].x + 44
+    duplicatedId !== seeded[1].id &&
+    tc.canvasSnapshot().canvases[instanceId].cards[duplicatedId].x === seeded[1].x + 44 &&
+    tc.canvasCardBinding(tc.canvasSnapshot().canvases[instanceId].cards[duplicatedId]) === null
 );
-const sentBack = tc.canvasSendToBoard(seeded[0]);
+const sentBack = tc.canvasSendToBoard({ title: "衍生卡", blocks: [{ kind: "text", text: "hi" }] });
+check("a canvas card can be sent back to the task board", sentBack.ok === true && sentBack.created === true && sentBack.id.startsWith("usr-"));
+check("sending the same card back updates the board card", tc.canvasSendToBoard({ title: "衍生卡", blocks: [{ kind: "text", text: "hi" }] }).created === false);
 check(
-  "a canvas card can be sent back to the task board",
-  sentBack.ok === true && sentBack.created === true && sentBack.id.startsWith("usr-")
+  "control items are labelled by kind and content",
+  tc.taskBlockLabel({ kind: "embed", title: "本地应用" }) === "网页应用 · 本地应用" &&
+    tc.taskBlockLabel({ kind: "checklist", items: [{ id: "a", label: "跑测试" }] }) === "清单 · 跑测试" &&
+    tc.taskBlockLabel({ kind: "heading", text: "发版前" }) === "小标题 · 发版前"
 );
-check("sending the same card back updates the board card", tc.canvasSendToBoard(seeded[0]).created === false);
+check(
+  "bound links and block ids survive a sanitize round-trip",
+  tc.sanitizeCanvasCard({ id: "cc-1", from: { card: "usr-1", bid: "blk-1" } }, "cc-1").from.bid === "blk-1" &&
+    tc.sanitizeTaskBlocks([{ kind: "text", text: "x", bid: "blk-9" }])[0].bid === "blk-9"
+);
+check(
+  "card body is a thumbnail of its controls",
+  renderToString(jsx(tc.TaskUserBody, { card: { title: "t", blocks: [{ kind: "text", text: "x" }, { kind: "note", text: "y" }] }, onWidget: () => {}, thumbnail: true })).includes("2 个控件 · ⛶ 进画布排布") &&
+    // canvas items are the controls themselves, so they do not advertise the thumbnail footer
+    renderToString(jsx(tc.TaskUserBody, { card: { title: "t", blocks: [{ kind: "text", text: "x" }] }, onWidget: () => {} })).includes("个控件 · ⛶ 进画布排布") === false
+);
 tc.applyTaskCardSpec({ op: "delete", title: "发布清单" });
+tc.applyTaskCardSpec({ op: "delete", title: "衍生卡" });
 
 const instanceHtml = renderToString(jsx(tc.TaskCanvasView, {
-  instance: { canvasId: instanceId, cardId: "usr-9", title: "发布清单", source: instanceSource },
+  instance: { canvasId: instanceId, cardId: createdSpec.id, title: "发布清单", source: instanceSource },
   onClose: () => {},
 }));
 check(
   "instance canvas bar is bound to the card",
   instanceHtml.includes("副本画布") &&
+    instanceHtml.includes("重新展开控件") &&
     instanceHtml.includes("放入源卡副本") &&
     instanceHtml.includes("返回任务台") &&
     instanceHtml.includes("删除副本") &&

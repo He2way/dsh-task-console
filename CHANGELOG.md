@@ -4,6 +4,16 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.16.0
+
+- **A card's controls live on its own canvas / 卡片的控件就在它自己的画布上**: maximizing a user card no longer drops a single copy of the card onto the plane — it **unrolls the card into its controls**, one canvas item per control (laid out in two readable columns). Each item is a normal canvas card: drag it, resize it, edit it (`✎`), refactor it by talking (`💬`), open it fullscreen (`⛶`), duplicate it (`⧉`), send it to the board (`📥`) or delete it.
+  - **The board card is their thumbnail**: the card body renders the same controls compactly and carries a `N 个控件 · ⛶ 进画布排布` line; **rearranging the items on the plane re-orders the controls on the card** (the order is derived from their `y`, then `x`), so the card is a live miniature of what is on the canvas.
+  - **Two-way content mapping**: controls get a stable identity (`bid`, carried through every sanitize round-trip, alongside the existing widget `key`). Editing a control's item (manual editor, `💬` refactor, embedded-app height drag) writes that control back onto the card, and deleting an item removes the control from the card (`🗑` says so when the item is bound).
+  - `⟲ 重新展开控件` re-unrolls the card's current controls (replacing the bound items) when the card was changed elsewhere; `⟲ 放入源卡副本` still drops a whole-card copy, and derived/duplicated items stay unbound so they never write back.
+  - Fixed a real bug this surfaced: stored card entries carry no `id` of their own, so every card used to share one instance canvas (`cv-inst-undefined`) — the panel now binds the id explicitly and `canvasOpenInstance` refuses to run without one.
+- **Tests**: `smoke.mjs` covers the unrolling (3 controls → 3 bound single-control items, ids stamped onto the card), idempotent re-entry, the active-canvas seat, **drag-driven reordering**, content write-back (edit / no-op / delete), re-unrolling, unbound duplicates, labels, `bid`/`from` round-trips and the thumbnail footer; `npm run verify:embed` adds a real pointer drag of a control item on the plane and asserts the board card's control order changed (`wHead|check|check|app` → `check|check|app|wHead`), plus the instance bar, the overlay from the app item and the screenshot.
+- **卡片的控件在它自己的画布里，可以拖动编辑；未打开的卡片是这些控件的缩略映射**：最大化自定义卡片不再只放一张副本，而是**把卡片拆成一个个控件**（每个控件一张画布卡片，两列排布）。每张都能拖动、缩放、`✎` 编辑、`💬` 对话重构、`⛶` 全屏、`⧉` 复制、`📥` 发回任务台、🗑 删除（删除绑定的控件会同时从卡片上移除该控件）。任务台上的卡片则是它们的**缩略映射**：卡片正文按同样顺序紧凑展示控件，底部标着「N 个控件 · ⛶ 进画布排布」，**在画布上拖动排序会同步改变卡片上的控件顺序**。控件现在有稳定身份 `bid`（与交互用的 `key` 一起在每次校验中保留），因此编辑画布上的控件会写回卡片。另修掉一个真实 bug：卡片存档本身不带 id，之前所有卡片会共用同一个副本画布；现在面板显式带上 id，缺 id 时拒绝进入。
+
 ## v0.15.0
 
 - **Maximizing a card turns it into a canvas — its own instance / 卡片最大化后变成画布（副本）**: a user card's `⛶` no longer just shows a big card, it **opens the card's own canvas instance** — a private workspace seeded with an independent copy of that card, centered in view, like entering an instance in a game:
