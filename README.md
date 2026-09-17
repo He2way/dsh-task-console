@@ -1,5 +1,5 @@
 # dsh-task-console
-
+[![Listed on dsh-plugin.org](https://dsh-plugin.org/badges/listed.svg)](https://dsh-plugin.org/plugins/he2way/dsh-task-console)
 [![npm version](https://img.shields.io/npm/v/dsh-task-console.svg)](https://www.npmjs.com/package/dsh-task-console)
 [![npm downloads](https://img.shields.io/npm/dm/dsh-task-console.svg)](https://www.npmjs.com/package/dsh-task-console)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
