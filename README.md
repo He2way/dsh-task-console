@@ -1,6 +1,9 @@
 # dsh-task-console
 
+[![npm version](https://img.shields.io/npm/v/dsh-task-console.svg)](https://www.npmjs.com/package/dsh-task-console)
+[![npm downloads](https://img.shields.io/npm/dm/dsh-task-console.svg)](https://www.npmjs.com/package/dsh-task-console)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![DeepSeek Harness plugin](https://img.shields.io/badge/DeepSeek%20Harness-plugin-202724)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)
 
 A [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) client plugin: a floating glass **task console** for the current session. Click the glass button in the bottom-right corner and the page "flips" to its back — a frosted-glass board with mouse-draggable cards showing live background jobs, subagents, a session overview and the workspace.
 
@@ -40,6 +43,8 @@ Listed in the community DSH plugin markets ([awesome-dsh-plugin](https://github.
 已收录进社区插件市场（`awesome-dsh-plugin` 及其下游市场）条目 **`He2way/dsh-task-console`**，分类 **ui**。装上市场后可在里面一键安装，或直接用下面的命令。
 
 ### From npm / 从 npm 安装
+
+Published as [`dsh-task-console`](https://www.npmjs.com/package/dsh-task-console) (23 files, ~1.7 MB tarball, no build step):
 
 ```bash
 dsh plugin --profile web add dsh-task-console

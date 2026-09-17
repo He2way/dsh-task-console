@@ -7,6 +7,7 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 ## v0.22.0
 
 - **Published to the DSH plugin market / 发布到 DSH 插件市场**: the plugin is submitted to the curated registry behind the community plugin markets (`awesome-dsh-plugin`, which feeds `dsh-market` and the storefronts) as `He2way/dsh-task-console`, category **ui**, with a prebuilt tarball attached to the GitHub release so one-click installs skip the build-approval step.
+  - **Live on npm**: [`dsh-task-console@0.22.0`](https://www.npmjs.com/package/dsh-task-console) (published 2026-09-17, `latest`, 23 files, 1.7 MB tarball, `repository` pointing back at this repo so the markets can link the package and show download counts). Verified after publishing by re-downloading the tarball from the registry and comparing `lib/client.js` — byte-identical to the repository.
   - Repository metadata brought in line with the submission rules: the **`dsh-plugin` topic** is set, `dsh.bundle` + `cordis.patch.yml` are in place (what makes `dsh plugin add` work), the repo is well past the 1-day age bar, and the description now states what the plugin actually does.
   - `screenshots.json` declares two real UI screenshots (`docs/screenshots/canvas-and-chat.png`, `embedded-web-apps.png`, both generated from the headless-browser verification runs), which the markets show AppStore-style on the detail page.
   - `engines.dsh` now declares the tested harness range (`>=0.1.5-rc.1 <0.2.0-0`) so host-aware catalog filters can compare against the running DSH.
