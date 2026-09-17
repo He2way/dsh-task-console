@@ -349,6 +349,35 @@ try {
   ReactDOM.flushSync(() => {});
   log("BAREDRAG before=" + JSON.stringify(beforeBareMove) + " after=" + JSON.stringify(counterItem === null ? null : { left: counterItem.style.left, top: counterItem.style.top }));
 
+  // ---- the canvas' own chat dock + a [canvas] op list applied to the plane ----
+  // Stores are published outside React here, exactly like the dock's agent reply does:
+  // the update is scheduled and a later frame renders it, so this step waits a beat.
+  Promise.resolve().then(() => {
+    const chatInput = document.querySelector(".dsh-tc-canvasChatInput");
+    const chatSend = document.querySelector(".dsh-tc-canvasChat .dsh-tc-btnPrimary");
+    const beforeChat = document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare").length;
+    const chatApplied = tc.applyCanvasSpec(instanceKey, {
+      ops: [
+        { op: "add", block: { kind: "countdown", label: "截止", until: Date.now() + 3600000, bid: "blk-chat" }, x: 40, y: 420 },
+        { op: "rename", name: "对话改名的副本" },
+        { op: "note", note: "已加上倒计时" },
+      ],
+    });
+    ReactDOM.flushSync(() => {});
+    return new Promise((resolve) => setTimeout(resolve, 80)).then(() => {
+      ReactDOM.flushSync(() => {});
+      log("CHAT input=" + (chatInput !== null) + " send=" + (chatSend !== null) +
+        " placeholder=" + (chatInput === null ? "none" : (chatInput.getAttribute("placeholder") || "").slice(0, 12)) +
+        " bareBefore=" + beforeChat +
+        " bareAfter=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare").length +
+        " changed=" + chatApplied.changed +
+        " storeName=" + tc.canvasSnapshot().canvases[instanceKey].name +
+        " storeCards=" + Object.keys(tc.canvasSnapshot().canvases[instanceKey].cards).length +
+        " domName=" + (document.querySelector(".dsh-tc-canvasName") === null ? "none" : document.querySelector(".dsh-tc-canvasName").value) +
+        " note=" + JSON.stringify(chatApplied.notes));
+    });
+  });
+
   // ---- fullscreen overlay from the control item that holds the embedded app ----
   const canvasCard = [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card")].find((node) => node.querySelector(".dsh-tc-app") !== null) ?? null;
   const fullButton = canvasCard === null ? null : buttonOf(canvasCard, "全屏显示");
@@ -496,6 +525,8 @@ const instanceOk = instance !== null &&
   // label), the dropped one is gone, the added one appears — one item per control
   /REFACTOR ok=true items=3 kept=true place=true domItems=3 titles=.*说明/.test(boardText) &&
   boardText.includes("小标题 · 重构后的标题") &&
+  // the canvas chat dock exists and a [canvas] op list edits the plane (rename + note too)
+  /CHAT input=true send=true placeholder=\S+ bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText) &&
   // any control can be added straight onto the plane, then dragged by its own toolbar
   /ADD menu=true chips=18 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText) &&
   // the bare control followed the pointer by exactly the dispatched delta
@@ -514,4 +545,14 @@ const fullOk = boardText.includes("BOARD cards=") &&
   // Esc closes the overlay but keeps the instance canvas underneath
   boardText.includes("ESCAPE overlay=true instance=true");
 console.log(ok && instanceOk && fullOk ? "ALL PASS" : "FAILURES");
+if (process.env.DSH_EMBED_DEBUG === "1") {
+  console.log("DEBUG ok=" + ok + " instanceOk=" + instanceOk + " fullOk=" + fullOk);
+  console.log("DEBUG instance=" + JSON.stringify(instance));
+  console.log("DEBUG reorder=" + JSON.stringify(reorder) + " bareMove=" + JSON.stringify(bareMove));
+  console.log("DEBUG full=" + JSON.stringify(full));
+  console.log("DEBUG add=" + /ADD menu=true chips=18 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText));
+  console.log("DEBUG chat=" + /CHAT input=true send=true placeholder=用一句话修改这块画布 bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText));
+  console.log("DEBUG derive=" + boardText.includes("DERIVE items=4 bare=1 apps=1"));
+  console.log("DEBUG escape=" + boardText.includes("ESCAPE overlay=true instance=true"));
+}
 process.exit(ok && instanceOk && fullOk ? 0 : 1);

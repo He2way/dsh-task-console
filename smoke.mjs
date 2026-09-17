@@ -368,6 +368,7 @@ const noTurnCtx = {
 };
 const noTurnPhases = [];
 const noTurnResult = await tc.createTaskCardAgentBridge(noTurnCtx)(
+  tc.TASK_CARD_AGENT_TASK,
   { id: "usr-bridge", title: "旧标题", blocks: [], instruction: "重构成一张小卡" },
   (event) => noTurnPhases.push(event)
 );
@@ -418,6 +419,7 @@ const forkCtx = {
 const forkTexts = [];
 const forkPhases = [];
 const forkResult = await tc.createTaskCardAgentBridge(forkCtx)(
+  tc.TASK_CARD_AGENT_TASK,
   { id: "usr-bridge", title: "旧标题", blocks: [], instruction: "重构成派生结果卡" },
   (event) => { forkPhases.push(event); if (event.phase === "assistant") forkTexts.push(event.text); }
 );
@@ -488,6 +490,7 @@ const staleCtx = {
 };
 const stalePhases = [];
 const staleResult = await tc.createTaskCardAgentBridge(staleCtx)(
+  tc.TASK_CARD_AGENT_TASK,
   { id: "usr-bridge", title: "旧标题", blocks: [], instruction: "重构成清理后结果卡" },
   (event) => stalePhases.push(event)
 );
@@ -532,6 +535,7 @@ const foreignCtx = {
   },
 };
 const foreignResult = await tc.createTaskCardAgentBridge(foreignCtx)(
+  tc.TASK_CARD_AGENT_TASK,
   { id: "usr-bridge", title: "旧标题", blocks: [], instruction: "重构成趋势卡" },
   () => {}
 );
@@ -1051,6 +1055,110 @@ check(
 check("quick editor falls back to JSON for structural controls", renderToString(jsx(tc.TaskBlockQuickEdit, { block: { kind: "table", columns: ["A"], rows: [["1"]] }, onSave: () => {}, onCancel: () => {} })).includes("控件 JSON"));
 const addPanelHtml = renderToString(jsx(tc.TaskCanvasView, { onClose: () => {} }));
 check("canvas view offers the add-control entry", addPanelHtml.includes("+ 控件"));
+
+// ---- canvas chat: describe a change, the [canvas] ops are applied to the plane ----
+const chatSpec = tc.parseCanvasSpec('[canvas] { "ops": [ { "op": "add", "kind": "countdown", "label": "截止", "until": 4102444800000, "x": 40, "y": 30 }, { "op": "add", "kind": "embed", "url": "javascript:alert(1)" }, { "op": "note", "text": "已加上倒计时" } ] } [/canvas]');
+check(
+  "canvas ops parse from a [canvas] block",
+  chatSpec !== null &&
+    chatSpec.ops.length === 2 &&
+    chatSpec.ops[0].op === "add" &&
+    chatSpec.ops[0].block.kind === "countdown" &&
+    chatSpec.ops[0].x === 40 &&
+    // an invalid control (bad scheme) is dropped instead of reaching the plane
+    chatSpec.ops[1].op === "note" &&
+    chatSpec.ops[1].note === "已加上倒计时"
+);
+check("canvas ops parse from a fenced block", tc.parseCanvasSpec('```canvas\n{ "ops": [ { "op": "rename", "name": "新名字" } ] }\n```') !== null);
+check("canvas ops reject junk", tc.parseCanvasSpec("no block here") === null && tc.parseCanvasSpec("[canvas] { not json } [/canvas]") === null && tc.parseCanvasSpec('[canvas] { "ops": [] } [/canvas]') === null);
+
+const chatCanvas = tc.canvasCreate("对话画布");
+const chatSeed = tc.canvasAddControl(chatCanvas.id, "progress", 100, 100);
+const chatVictim = tc.canvasAddControl(chatCanvas.id, "note", 500, 500);
+const chatSeedBlock = tc.canvasSnapshot().canvases[chatCanvas.id].cards[chatSeed].blocks[0];
+const applied = tc.applyCanvasSpec(chatCanvas.id, {
+  ops: [
+    { op: "add", block: { kind: "checklist", key: "k", bid: "blk-chat-1", items: [{ id: "a", label: "A" }] }, x: 10, y: 20 },
+    { op: "addCard", title: "对话新建卡", blocks: [{ kind: "note", text: "卡片里的说明" }], x: 400, y: 60 },
+    { op: "update", id: chatSeed, block: { ...chatSeedBlock, label: "改过的进度", value: 2 } },
+    { op: "move", id: chatSeed, x: 260, y: 140 },
+    { op: "rename", name: "对话改过的画布" },
+    { op: "remove", id: chatVictim },
+    { op: "note", note: "都改好了" },
+    { op: "remove", id: "cc-does-not-exist" },
+  ],
+});
+const chatCanvasNow = tc.canvasSnapshot().canvases[chatCanvas.id];
+check(
+  "canvas ops are applied to the plane",
+  applied.ok === true &&
+    applied.changed === 6 &&
+    applied.skipped === 1 &&
+    chatCanvasNow.name === "对话改过的画布" &&
+    chatCanvasNow.cards[chatSeed].x === 260 &&
+    chatCanvasNow.cards[chatSeed].y === 140 &&
+    chatCanvasNow.cards[chatSeed].blocks[0].label === "改过的进度" &&
+    chatCanvasNow.cards[chatSeed].blocks[0].value === 2 &&
+    chatCanvasNow.cards[chatVictim] === void 0 &&
+    Object.values(chatCanvasNow.cards).some((item) => item.title === "对话新建卡") &&
+    Object.values(chatCanvasNow.cards).some((item) => item.bare === true && item.blocks[0].kind === "checklist")
+);
+check(
+  "canvas ops report what changed",
+  applied.message.indexOf("新增控件 1") !== -1 &&
+    applied.message.indexOf("新增卡片 1") !== -1 &&
+    applied.message.indexOf("修改控件 1") !== -1 &&
+    applied.message.indexOf("移动 1") !== -1 &&
+    applied.message.indexOf("删除 1") !== -1 &&
+    applied.message.indexOf("1 项无法应用") !== -1 &&
+    applied.notes[0] === "都改好了"
+);
+const inventory = tc.canvasInventory(chatCanvasNow);
+check(
+  "the canvas prompt lists what is on the plane",
+  inventory.indexOf("id=" + chatSeed) !== -1 &&
+    inventory.indexOf("裸控件") !== -1 &&
+    inventory.indexOf("对话新建卡") !== -1 &&
+    inventory.indexOf("progress") !== -1 &&
+    inventory.indexOf("x=260") !== -1
+);
+const chatPrompt = tc.composeCanvasChatPrompt({ canvasId: chatCanvas.id, canvas: chatCanvasNow }, "把进度挪到左上，再加一个倒计时");
+check(
+  "the canvas prompt teaches the operation list",
+  chatPrompt.indexOf("【任务台画布编辑】") !== -1 &&
+    chatPrompt.indexOf("[canvas]") !== -1 &&
+    chatPrompt.indexOf("画布 id：" + chatCanvas.id) !== -1 &&
+    chatPrompt.indexOf("把进度挪到左上") !== -1 &&
+    chatPrompt.indexOf('"op": "addCard"') !== -1 &&
+    chatPrompt.indexOf('"op": "move"') !== -1 &&
+    chatPrompt.indexOf("id=" + chatSeed) !== -1
+);
+const chatDockHtml = renderToString(jsx(tc.CanvasChatDock, { canvas: chatCanvasNow, canvasId: chatCanvas.id, onApply: () => null }));
+check(
+  "the canvas chat dock renders its own input",
+  chatDockHtml.includes("dsh-tc-canvasChat") &&
+    chatDockHtml.includes("用一句话修改这块画布") &&
+    chatDockHtml.includes("发送") &&
+    chatDockHtml.includes("记录")
+);
+check(
+  "the floating composer can collapse into a logo",
+  styleTags[0].textContent.includes(".dsh-tc-seatMini{") &&
+    styleTags[0].textContent.includes(".dsh-tc-miniToggle{") &&
+    styleTags[0].textContent.includes(".dsh-tc-seatMini > .dsh-tc-miniToggle{display:flex!important") &&
+    styleTags[0].textContent.includes("bottom:74px!important")
+);
+// A control removed through the canvas chat is removed from the card it maps.
+const chatBoundCard = tc.applyTaskCardSpec({ op: "upsert", title: "对话绑定卡", blocks: [{ kind: "note", text: "会被删掉" }] });
+const chatInstanceId = tc.canvasOpenInstance({ ...tc.snapshotTaskCards().cards[chatBoundCard.id], id: chatBoundCard.id });
+const chatBoundItem = Object.values(tc.canvasSnapshot().canvases[chatInstanceId].cards).find((item) => tc.canvasCardBinding(item) !== null);
+check(
+  "removing an item through the canvas chat also removes its control",
+  tc.snapshotTaskCards().cards[chatBoundCard.id].blocks.length === 1 &&
+    tc.applyCanvasSpec(chatInstanceId, { ops: [{ op: "remove", id: chatBoundItem.id }] }).ok === true &&
+    tc.snapshotTaskCards().cards[chatBoundCard.id].blocks.length === 0
+);
+tc.applyTaskCardSpec({ op: "delete", title: "对话绑定卡" });
 
 const canvas = tc.canvasCreate("测试画布");
 const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });check(

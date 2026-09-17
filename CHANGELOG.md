@@ -4,6 +4,17 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.19.0
+
+- **The canvas has its own conversation box / 画布自带对话框**: every canvas (including a card's instance canvas) now carries a docked chat at the bottom — describe the change you want in one sentence and the canvas is edited for you. The dock keeps a collapsible transcript (`▴ 记录`), shows the streaming agent reply, and reports exactly what changed (`已应用：新增控件 1 · 移动 1 · 重命名画布`).
+  - The agent gets a **full inventory of the plane** (every item's id, whether it is a card or a bare control, its controls, its position) and answers with a single `[canvas]` block of operations: `add` (any control, with its fields), `addCard`, `update`, `move`, `remove`, `rename`, `note`. Every operation runs through the normal canvas helpers, so a control added by chat is a normal bare control, a removed bound item still removes its control from the card, and a rename is a real rename.
+  - Operations that cannot be applied are **skipped and counted** instead of failing the batch: an unknown id or a control whose fields do not validate is reported as `N 项无法应用`, and the ops that were valid still land.
+  - The temporary-agent bridge was generalised into reusable tasks (`TASK_CARD_AGENT_TASK` / `TASK_CANVAS_AGENT_TASK`), so the card popup and the canvas dock share one session/prompt/parse/apply pipeline.
+  - Fixed while building it: `rename` and `note` ops were counted as skipped because the applier looked up an item id before handling canvas-level operations.
+- **The main composer can shrink into a logo / 主会话输入框可缩成 Logo**: while the board is open, the floating main-session window has a `—` control that collapses the whole thing into a round 🐋 chip in the corner (above the flip toggle); clicking the logo brings the window back. The real composer is only hidden by CSS — React keeps it mounted, so nothing typed or configured is lost, and the chip cleanly disappears when the page flips back.
+- **Tests**: `smoke.mjs` covers the `[canvas]` protocol (marker and fenced parsing, junk rejection, invalid controls dropped, 6 applied + 1 skipped with the exact message, rename/`note`, inventory contents, the prompt's op vocabulary) and the dock's render, plus the collapse-to-logo CSS contract. The bridge tests now pass the task descriptor explicitly. `npm run verify:embed` drives a `[canvas]` op list through the real canvas view and asserts the plane and the name input updated, alongside the existing drag/refactor/fullscreen checks.
+- **画布内自带对话修改框**：每块画布（含卡片的副本画布）底部都有对话条——用一句话描述改动即可：临时 agent 会拿到**画布清单**（每项的 id、是卡片还是裸控件、含哪些控件、所在坐标），并回一个 `[canvas]` 操作列表（`add` / `addCard` / `update` / `move` / `remove` / `rename` / `note`），由客户端逐条执行。`▴ 记录` 可展开对话记录，执行完会汇报改动明细；无法执行的项会被**跳过并计数**（如引用了不存在的 id 或控件字段不合法），其余照常生效。顺带把临时 agent 桥接抽成可复用的任务描述（卡片 / 画布共用同一条会话-提示-解析-应用管线），并修掉 `rename`/`note` 被误判为跳过的问题。另：**主会话输入框可缩成 Logo** —— 任务台打开时，浮动输入窗右上角多了 `—`，点一下整个窗口收成右下角的圆形 🐋 图标（在翻面按钮上方），点图标即可恢复；输入框只是被 CSS 隐藏，React 始终挂载，内容和配置都不会丢。
+
 ## v0.18.0
 
 - **The canvas is no longer only cards: put any control on it / 画布上可以直接放任何控件**: `+ 控件` in the canvas bar drops **any control straight onto the plane with no card around it** — 18 kinds (text, heading, note, stats, progress, trend, key-values, links, chips, checklist, counter, button, table, code, toggle, countdown, bars, embedded web app), each with usable starter content.
