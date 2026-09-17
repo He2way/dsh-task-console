@@ -15,11 +15,13 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { startBridge } from "../bridge/server.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const OUT = join(tmpdir(), "dsh-task-console-embed-check");
 const PORT = 5199;
+const BRIDGE_PORT = 8790;
 
 function findChrome() {
   const candidates = [
@@ -61,6 +63,12 @@ const server = createServer((request, response) => {
   response.end(appHtml);
 });
 await new Promise((resolve) => server.listen(PORT, "127.0.0.1", resolve));
+
+// The page bridge: proxies the app above and injects the agent the workbench drives.
+const bridge = startBridge({ port: BRIDGE_PORT, host: "127.0.0.1" });
+await bridge.ready;
+const bridgePort = bridge.server.address().port;
+console.log("page bridge on http://127.0.0.1:" + bridgePort);
 
 const pageHead = (title, extraCss) => `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>${title}</title>
 <style>
@@ -420,8 +428,41 @@ try {
   log("DERIVE items=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length +
     " bare=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare").length +
     " apps=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-app").length);
+
+  // ---- the page bridge: the agent operates the embedded app for real ----
+  // The board card gains a *controlled* embed: that frame loads through the bridge, the
+  // injected agent registers, and an action list runs inside the actual page.
+  tc.saveTaskBridgeSettings({ url: "http://127.0.0.1:${BRIDGE_PORT}", token: "", enabled: true });
+  const cardNow = tc.snapshotTaskCards().cards[applied.id];
+  const controlledBlocks = [...(cardNow.blocks ?? []), { kind: "embed", url, title: "受控应用", height: 240, fill: false, control: true }];
+  tc.applyTaskCardSpec({ op: "upsert", id: applied.id, title: "全屏应用卡", blocks: controlledBlocks });
+  const appTarget = tc.taskBridgeTarget(url);
+  void Promise.resolve()
+    .then(() => new Promise((resolve) => setTimeout(resolve, 2200))) // iframe → proxy → injected agent → ws
+    .then(async () => {
+      ReactDOM.flushSync(() => {});
+      const before = tc.taskBridgePageState(appTarget);
+      const executed = await tc.runPageBlockFromReply(
+        '[page] { "actions": [ { "action": "read" }, { "action": "click", "selector": "#b" }, { "action": "click", "selector": "#b" }, { "action": "read" } ] } [/page]',
+        controlledBlocks
+      );
+      const seen = Array.isArray(executed !== null && executed !== void 0 ? executed.results : null)
+        ? executed.results.map((entry) => (entry.result !== null && entry.result !== void 0 && entry.result.value !== null && entry.result.value !== void 0 && typeof entry.result.value.text === "string" ? entry.result.value.text : "")).join(" | ")
+        : "";
+      const badge = document.querySelector(".dsh-tc-appBadge");
+      log("BRIDGE state=" + before.state +
+        " title=" + JSON.stringify(before.title) +
+        " ok=" + (executed !== null && executed !== void 0 && executed.ok === true) +
+        " count=" + (executed !== null && executed !== void 0 ? executed.total : -1) +
+        " clicks=" + (/点击 2 次/.test(seen) ? 2 : /点击 1 次/.test(seen) ? 1 : 0) +
+        " badge=" + (badge === null ? "none" : badge.textContent) +
+        " summary=" + JSON.stringify(String(executed !== null && executed !== void 0 ? executed.summary : "").slice(0, 160)));
+    })
+    .catch((error) => log("BRIDGECHAIN " + String(error !== null && error.message ? error.message : error)))
+    .then(() => { window.__dshHarnessDone = true; });
 } catch (error) {
   log("ERROR " + (error && error.message ? error.message : String(error)));
+  window.__dshHarnessDone = true;
 }
 <\/script>
 </body></html>`;
@@ -451,33 +492,96 @@ const runChrome = (args, profileName) => new Promise((resolve) => {
   child.on("exit", () => resolve(out));
 });
 const fileUrl = (path) => "file:///" + path.replace(/\\/g, "/");
+
+/**
+ * Drive the board harness over the DevTools protocol: real time (no virtual clock), so
+ * WebSocket handshakes and the plugin's own timeouts behave exactly as in a browser.
+ * Waits until the page sets `window.__dshHarnessDone`, then reads the log and screenshots.
+ */
+async function runBoardPhase(url, screenshotPath) {
+  const profile = join(OUT, "chrome-cdp-profile");
+  rmSync(profile, { recursive: true, force: true });
+  const child = spawn(chrome, [
+    "--headless=new", "--disable-gpu", "--no-first-run", "--no-sandbox", "--hide-scrollbars",
+    "--allow-file-access-from-files", "--remote-debugging-port=0", "--window-size=1280,860",
+    "--user-data-dir=" + profile, "about:blank",
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  const wsUrl = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("devtools endpoint timeout")), 20000);
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      const match = /ws:\/\/[^\s]+/.exec(stderr);
+      if (match !== null) { clearTimeout(timer); resolve(match[0]); }
+    });
+    child.on("exit", () => { clearTimeout(timer); reject(new Error("chrome exited: " + stderr.slice(-300))); });
+  });
+  const browser = new WebSocket(wsUrl);
+  await new Promise((resolve, reject) => {
+    browser.addEventListener("open", () => resolve());
+    browser.addEventListener("error", () => reject(new Error("devtools socket error")));
+  });
+  let nextId = 1;
+  const pending = new Map();
+  browser.addEventListener("message", (event) => {
+    const message = JSON.parse(String(event.data));
+    if (message.id === void 0) return;
+    const settle = pending.get(message.id);
+    if (settle === void 0) return;
+    pending.delete(message.id);
+    if (message.error !== void 0) settle.reject(new Error(JSON.stringify(message.error)));
+    else settle.resolve(message.result);
+  });
+  const send = (sessionId, method, params) => new Promise((resolve, reject) => {
+    const id = nextId++;
+    pending.set(id, { resolve, reject });
+    browser.send(JSON.stringify(sessionId === null ? { id, method, params } : { id, sessionId, method, params }));
+  });
+  const evaluate = async (sessionId, expression) => {
+    const result = await send(sessionId, "Runtime.evaluate", { expression, returnByValue: true, awaitPromise: false });
+    return result.result === void 0 ? null : result.result.value;
+  };
+  try {
+    const { targetId } = await send(null, "Target.createTarget", { url });
+    const { sessionId } = await send(null, "Target.attachToTarget", { targetId, flatten: true });
+    await send(sessionId, "Page.enable");
+    const deadline = Date.now() + 40000;
+    let done = false;
+    while (Date.now() < deadline) {
+      done = (await evaluate(sessionId, "window.__dshHarnessDone === true")) === true;
+      if (done) break;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    const log = await evaluate(sessionId, "document.getElementById('log') === null ? '' : document.getElementById('log').textContent");
+    const shot = await send(sessionId, "Page.captureScreenshot", { format: "png" });
+    writeFileSync(screenshotPath, Buffer.from(shot.data, "base64"));
+    return { log: typeof log === "string" ? log : "", done };
+  } finally {
+    try { browser.close(); } catch { /* closing */ }
+    try { child.kill(); } catch { /* already gone */ }
+  }
+}
 const dom = await runChrome([
   "--headless=new", "--disable-gpu", "--no-first-run", "--no-sandbox", "--hide-scrollbars",
   "--allow-file-access-from-files", "--virtual-time-budget=9000", "--window-size=1000,900",
   "--screenshot=" + shot, "--dump-dom", fileUrl(harness),
 ], "drag");
-const boardDom = await runChrome([
-  "--headless=new", "--disable-gpu", "--no-first-run", "--no-sandbox", "--hide-scrollbars",
-  "--allow-file-access-from-files", "--virtual-time-budget=9000", "--window-size=1280,860",
-  "--screenshot=" + boardShot, "--dump-dom", fileUrl(boardHarness),
-], "full");
+const boardReport = await runBoardPhase(fileUrl(boardHarness), boardShot);
 server.close();
+void bridge.close();
+console.log("browser   ", chrome);
+console.log("screenshots", shot + " | " + boardShot);
 
 const readReport = (source) => {
   const report = /<pre id="log"[^>]*>([\s\S]*?)<\/pre>/.exec(source);
   return report === null ? "" : report[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
 };
-if (process.env.DSH_EMBED_DEBUG === "1") {
-  writeFileSync(join(OUT, "dom-dump.html"), dom);
-  writeFileSync(join(OUT, "dom-board.html"), boardDom);
-}
+if (process.env.DSH_EMBED_DEBUG === "1") writeFileSync(join(OUT, "dom-dump.html"), dom);
 const text = readReport(dom);
-const boardText = readReport(boardDom);
-console.log("browser   ", chrome);
-console.log("screenshots", shot + " | " + boardShot);
+const boardText = boardReport.log.trim();
 console.log("---- cards/embed harness ----");
 console.log(text === "" ? "no page report" : text);
-console.log("---- board/fullscreen harness ----");
+console.log("---- board/canvas/bridge harness ----");
 console.log(boardText === "" ? "no page report" : boardText);
 const sizes = /DRAG wrapBefore=(\d+) wrapAfter=(\d+) frameBefore=(\d+) frameAfter=(\d+) committed=(\[.*\])/.exec(text);
 const zoom = /ZOOMED scale=([\d.]+) layoutBefore=(\d+) layoutAfter=(\d+) rectAfter=(-?\d+) committed=(\{.*\})/.exec(text);
@@ -546,7 +650,9 @@ const instanceOk = instance !== null &&
   bareMove !== null &&
   Number(bareMove[3]) === Number(bareMove[1]) + 120 &&
   Number(bareMove[4]) === Number(bareMove[2]) + 60 &&
-  boardText.includes("DERIVE items=4 bare=1 apps=1");
+  boardText.includes("DERIVE items=4 bare=1 apps=1") &&
+  // the agent operated the real embedded page through the bridge
+  /BRIDGE state=connected title="本地应用" ok=true count=4 clicks=2 badge=受控 · 已连接/.test(boardText);
 const fullOk = boardText.includes("BOARD cards=") &&
   full !== null &&
   full[1] === "true" &&

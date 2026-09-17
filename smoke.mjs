@@ -1167,6 +1167,116 @@ check(
 );
 tc.applyTaskCardSpec({ op: "delete", title: "对话绑定卡" });
 
+// ---- page bridge: the agent can operate an embedded web app ----
+check(
+  "bridge target keys are stable and url-derived",
+  tc.taskBridgeTarget("http://127.0.0.1:5199/") === tc.taskBridgeTarget("http://127.0.0.1:5199/") &&
+    tc.taskBridgeTarget("http://127.0.0.1:5199/") !== tc.taskBridgeTarget("http://127.0.0.1:5200/") &&
+    tc.taskBridgeTarget("http://a/").startsWith("t")
+);
+const bridgeSettings = tc.sanitizeTaskBridgeSettings({ url: "http://127.0.0.1:8790/", token: "abc", enabled: true });
+check(
+  "bridge settings sanitize",
+  bridgeSettings.url === "http://127.0.0.1:8790" &&
+    bridgeSettings.token === "abc" &&
+    bridgeSettings.enabled === true &&
+    tc.sanitizeTaskBridgeSettings({ url: "javascript:alert(1)", enabled: "yes" }).url === "http://127.0.0.1:8790" &&
+    tc.sanitizeTaskBridgeSettings({ url: "javascript:alert(1)" }).enabled === false
+);
+const pageUrl = tc.taskBridgePageUrl("http://localhost:5199/app", { url: "http://127.0.0.1:8790", token: "tk", enabled: true });
+check(
+  "a controlled app is proxied through the bridge",
+  pageUrl.src === "http://127.0.0.1:8790/p?url=" + encodeURIComponent("http://localhost:5199/app") + "&target=" + pageUrl.target + "&token=tk" &&
+    pageUrl.target === tc.taskBridgeTarget("http://localhost:5199/app")
+);
+const pageSpec = tc.parsePageSpec('[page] { "actions": [ { "action": "click", "selector": "#buy" }, { "action": "type", "selector": "#q", "value": "dsh", "submit": true }, { "action": "read" }, { "action": "nope" }, { "action": "click" } ], "then": "确认订单是否出现", "summary": "下单" } [/page]');
+check(
+  "page actions parse and validate",
+  pageSpec !== null &&
+    pageSpec.actions.length === 3 &&
+    pageSpec.actions[0].action === "click" &&
+    pageSpec.actions[0].selector === "#buy" &&
+    pageSpec.actions[1].submit === true &&
+    pageSpec.actions[2].action === "read" &&
+    pageSpec.actions.every((action) => tc.TASK_BRIDGE_ACTIONS.includes(action.action)) &&
+    pageSpec.then === "确认订单是否出现" &&
+    pageSpec.summary === "下单"
+);
+check(
+  "page actions parse from a fence and reject junk",
+  tc.parsePageSpec('```page\n{ "actions": [ { "action": "scroll", "y": 400 } ] }\n```') !== null &&
+    tc.parsePageSpec('[page] { "actions": [ { "action": "click" } ] } [/page]') === null &&
+    tc.parsePageSpec("no page block") === null &&
+    tc.parsePageSpec('[page] { not json } [/page]') === null &&
+    tc.parsePageSpec('[page] { "actions": [ { "action": "type", "value": "x" } ] } [/page]') === null
+);
+check(
+  "action reports read like a human summary",
+  tc.describeBridgeAction({ action: "click", selector: "#buy" }, { ok: true, value: { clicked: { tag: "button", text: "购买" } } }).includes("点击 #buy ✓") &&
+    tc.describeBridgeAction({ action: "read" }, { ok: true, value: { title: "目标页", text: "主体文字" } }).includes("目标页") &&
+    tc.describeBridgeAction({ action: "click", selector: "#x" }, { ok: false, error: "no-match" }).includes("✗ no-match") &&
+    tc.describeBridgeAction({ action: "click", selector: "#x" }, { ok: false, error: "no-page" }).includes("网页未连上桥接")
+);
+const controlledBlocks = [
+  { kind: "embed", url: "http://a.local/", control: true },
+  { kind: "embed", url: "http://b.local/", control: false },
+  { kind: "text", text: "x" },
+];
+check(
+  "the controlled embed is the one that gets driven",
+  tc.pickBridgeTarget(controlledBlocks, "") !== null &&
+    tc.pickBridgeTarget(controlledBlocks, "").url === "http://a.local/" &&
+    tc.pickBridgeTarget(controlledBlocks, "http://a.local/").url === "http://a.local/" &&
+    tc.pickBridgeTarget(controlledBlocks, "http://b.local/") === null &&
+    tc.pickBridgeTarget([{ kind: "embed", url: "http://c.local/" }], "") === null &&
+    tc.collectBridgeTargets([controlledBlocks, [{ kind: "embed", url: "http://a.local/", control: true }]]).length === 1
+);
+const controlledCard = { title: "受控应用", blocks: [{ kind: "embed", url: "http://a.local/", title: "本地应用", height: 300, fill: false, control: true }] };
+const controlledHtml = renderToString(jsx(tc.TaskUserBody, { card: controlledCard, onWidget: () => {} }));
+check(
+  "a controlled app embeds the bridge url and shows its state",
+  controlledHtml.includes("http://127.0.0.1:8790/p?url=" + encodeURIComponent("http://a.local/")) &&
+    controlledHtml.includes("dsh-tc-appBadge") &&
+    controlledHtml.includes("受控 · ") &&
+    controlledHtml.includes("target=" + tc.taskBridgeTarget("http://a.local/"))
+);
+check(
+  "control survives a block round-trip and defaults off",
+  tc.sanitizeTaskBlocks([{ kind: "embed", url: "http://a.local/", control: true }])[0].control === true &&
+    tc.sanitizeTaskBlocks([{ kind: "embed", url: "http://a.local/" }])[0].control === false &&
+    tc.taskEditorBlocks({ embeds: [{ url: "http://a.local/", control: true, title: "", height: 300, fill: false }] })[0].control === true
+);
+check(
+  "the card editor exposes the control switch",
+  renderToString(jsx(tc.TaskCardEditor, { initial: { id: "usr-e", title: "受控卡", pinned: false, blocks: controlledCard.blocks }, onSave: () => {}, onCancel: () => {} })).includes("受控")
+);
+check("the bridge panel renders its settings", renderToString(jsx(tc.TaskBridgePanel, { onClose: () => {} })).includes("网页桥接 · 让 agent 操作内嵌应用"));
+const pagePrompt = tc.composeTaskCardChatPrompt({ id: "usr-p", title: "受控卡", blocks: controlledBlocks }, "帮我在页面里下单");
+check(
+  "the card prompt teaches the [page] protocol",
+  pagePrompt.includes("[page]") &&
+    pagePrompt.includes("http://a.local/") &&
+    pagePrompt.includes("可操作的网页应用") &&
+    pagePrompt.includes("click") &&
+    pagePrompt.includes("read") &&
+    pagePrompt.includes("then")
+);
+check("the prompt stays quiet without a controlled page", tc.composePagePromptSection([{ kind: "embed", url: "http://x.local/" }]) === "");
+check(
+  "page actions are refused while the switch is off",
+  (await tc.runPageBlockFromReply('[page] { "actions": [ { "action": "read" } ] } [/page]', controlledBlocks)).summary.includes("网页操作已关闭")
+);
+tc.saveTaskBridgeSettings({ url: "http://127.0.0.1:8790", token: "", enabled: true });
+check(
+  "page actions without a matching app report why",
+  (await tc.runPageBlockFromReply('[page] { "actions": [ { "action": "read" } ] } [/page]', [{ kind: "text", text: "x" }])).summary.includes("没有匹配的受控网页")
+);
+check(
+  "page actions against an unreachable bridge fail loudly",
+  (await tc.runPageBlockFromReply('[page] { "actions": [ { "action": "read" } ] } [/page]', controlledBlocks)).summary.includes("bridge-unreachable")
+);
+tc.saveTaskBridgeSettings(tc.freshTaskBridgeSettings());
+
 const canvas = tc.canvasCreate("测试画布");
 const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });check(
   "canvas publish adds a copy into the active canvas",

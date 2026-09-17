@@ -182,6 +182,20 @@ Open it with `🖼 画布` in the board header (or publish straight from a card 
 - **Publish as a copy** — `📤` on a user card copies its title, control blocks and style into an **independent canvas card** placed near the current viewport (repeatable; later edits do not affect the board card).
 - **Canvas cards** — drag by the header, resize from the bottom-right corner, `✎` manual edit, `💬` agent refactor, `⛶` fullscreen, `⧉` duplicate in place, `📥` send back to the task board (creates the card, or updates the one with the same title) and per-card widget state, all reusing the board pipelines.
 - **The canvas has its own conversation box / 画布自带对话框** — every canvas carries a **narrow floating chat panel, centred 16px above the bottom edge** (340px, over the plane): describe the change in one sentence (“把清单和进度放到左上角，再加一个倒计时到明天 18 点”) and a temporary agent edits the canvas — adding any control or card, rewriting one, moving, removing, renaming — through a single `[canvas]` block of operations. The panel header holds `▴` (transcript) and `—` (shrink the panel into a small `💬 改画布` pill, `Esc` in the input does the same); the transcript scrolls inside the panel, so the canvas keeps its area and panning/zooming stay untouched. The agent is handed a **full inventory of the plane** (ids, card vs bare control, controls, positions) so it references what is really there, and the result is reported as `已应用：新增控件 1 · 移动 1 · 重命名画布`, with unusable operations skipped and counted instead of failing the batch.
+- **Let the agent operate an embedded web app / 让 agent 操作内嵌网页** — mark an embedded app **受控** (card editor → 内嵌网页应用 → 受控) and the workbench — and therefore the agent — can really click, type, scroll and read inside it. A cross-origin iframe is opaque to its parent, so this works through the **zero-dependency page bridge shipped in [`bridge/server.mjs`](./bridge/server.mjs)**:
+
+  ```bash
+  node bridge/server.mjs --port 8790                                      # loopback only by default
+  node bridge/server.mjs --token <secret> --allow example.com,*.internal  # optional gates
+  ```
+
+  The bridge proxies the target page (`/p?url=…`) and injects an agent script into it; that script reports back over a WebSocket and executes commands **inside the page's own origin**, so the plugin never gains script access it should not have. Drive it by hand from the app bar, or let the agent do it: the card and canvas prompts list the controlled apps and teach a `[page]` block —
+
+  ```json
+  [page] { "actions": [ { "action": "read" }, { "action": "type", "selector": "#q", "value": "dsh", "submit": true }, { "action": "click", "text": "搜索" } ], "then": "把第一条结果读出来" } [/page]
+  ```
+
+  — which the workbench runs after applying the reply, reports in the chat log (`点击 #buy ✓ 「购买」`), and hands back to the agent through `then` for a second round. Actions: `read`, `query`, `click` (selector **or** button text), `type` (+`submit`), `press`, `select`, `check`, `scroll`, `wait`, `eval`, `back`, `forward`, `reload`. In the board header, `🌉 桥接` holds the bridge URL / token / the **允许 agent 操作网页** switch (the safety gate, off by default) plus a connection test; every controlled app shows a live `受控 · 已连接` badge. Nothing runs unless the app is marked 受控 *and* the switch is on, and the bridge stays on loopback unless you say otherwise.
 - **The main composer can shrink to a logo / 主会话输入框可缩成 Logo** — while the board is open, the floating main-session window has a `—` that collapses it into a round 🐋 chip in the corner (right above the flip toggle); click the chip to bring the window back. The composer is only hidden by CSS, so the conversation, attachments and settings stay exactly as they were.
 - **Anything but cards / 画布上可以直接放任何控件** — the canvas is not limited to cards: `+ 控件` drops **any control straight onto the plane with no card around it** (text, heading, note, stats, progress, trend, key-values, links, chips, checklist, counter, button, table, code, toggle, countdown, bars, embedded web app — 18 kinds, each with starter content). A bare control is dragged by its hover toolbar (or by any non-interactive part of itself), resized from its corner, edited with `✎` (a plain field for the simple kinds plus a **raw-JSON editor** with the same validation for everything else), refactored by talking (`💬`), duplicated (`⧉`), sent to the board (`📥`) and deleted (`🗑`). Pasted/dropped images become bare image controls too, and `▢`/`▣` flips any single-control item between the card look and the bare look in both directions.
 - **Images** — drop files onto the canvas or paste from the clipboard; images are downscaled to a bounded JPEG (at most 700 KB of data URL) and stored as an `image` control. Larger images are refused with a hint.
@@ -228,6 +242,8 @@ npm run check       # syntax-check the shipped bundle
 npm test            # smoke.mjs: SSR-renders the components with fixture state
 npm run relay       # start the collaboration relay (relay/server.mjs)
 npm run test:relay  # relay protocol smoke test (handshake, ops, presence, token)
+npm run bridge      # start the page bridge (bridge/server.mjs) for agent page control
+npm run test:bridge # bridge smoke test (proxy injection, command routing, gates)
 node tools/embed-diagram.mjs  # re-embed docs/architecture.html into lib/client.js
 npm run verify:diagram        # headless-Chrome check of the embedded diagram frame
 npm run verify:embed          # headless-Chrome checks: sandboxed frames, real grip drag
