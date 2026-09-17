@@ -1135,11 +1135,17 @@ check(
 );
 const chatDockHtml = renderToString(jsx(tc.CanvasChatDock, { canvas: chatCanvasNow, canvasId: chatCanvas.id, onApply: () => null }));
 check(
-  "the canvas chat dock renders its own input",
+  "the canvas chat dock is a narrow floating panel",
   chatDockHtml.includes("dsh-tc-canvasChat") &&
-    chatDockHtml.includes("用一句话修改这块画布") &&
+    chatDockHtml.includes("dsh-tc-canvasChatHead") &&
+    chatDockHtml.includes("画布对话") &&
+    chatDockHtml.includes("一句话改画布") &&
     chatDockHtml.includes("发送") &&
-    chatDockHtml.includes("记录")
+    // it is a floating overlay, not a full-width docked bar
+    styleTags[0].textContent.includes(".dsh-tc-canvasChat{position:absolute;right:16px;bottom:16px;z-index:40") &&
+    styleTags[0].textContent.includes("width:340px") &&
+    styleTags[0].textContent.includes(".dsh-tc-canvasChatMini{width:auto;border-radius:999px}") &&
+    styleTags[0].textContent.includes(".dsh-tc-chatPill{")
 );
 check(
   "the floating composer can collapse into a logo",

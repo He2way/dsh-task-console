@@ -213,7 +213,9 @@ try {
 // ---- phase 2: the real task board, with a card opened fullscreen ----
 // The panel is normally un-rotated by the flip container's [data-settled] rule; the
 // harness has no flip wrapper, so it neutralises the back-face transform itself.
-const boardPage = pageHead("fullscreen check", `.dsh-tc-panel{transform:none!important;backface-visibility:visible!important}`) + `
+const boardPage = pageHead("fullscreen check", `.dsh-tc-panel{transform:none!important;backface-visibility:visible!important}
+/* entry animations would offset geometry while the checks measure it */
+.dsh-tc-canvasChat,.dsh-tc-fullCard,.dsh-tc-bare{animation:none!important}`) + `
 <div class="dsh-tc-panel" data-theme="light" style="position:fixed;inset:0;transform:none">
   <div id="board" class="dsh-tc-canvas" style="position:relative;width:100%;height:100%"></div>
 </div>
@@ -366,8 +368,16 @@ try {
     ReactDOM.flushSync(() => {});
     return new Promise((resolve) => setTimeout(resolve, 80)).then(() => {
       ReactDOM.flushSync(() => {});
+      const dock = document.querySelector(".dsh-tc-canvasChat");
+      const dockBox = dock === null ? null : dock.getBoundingClientRect();
+      const view = document.querySelector(".dsh-tc-canvasView");
+      const viewBox = view === null ? null : view.getBoundingClientRect();
       log("CHAT input=" + (chatInput !== null) + " send=" + (chatSend !== null) +
-        " placeholder=" + (chatInput === null ? "none" : (chatInput.getAttribute("placeholder") || "").slice(0, 12)) +
+        " placeholder=" + (chatInput === null ? "none" : (chatInput.getAttribute("placeholder") || "")) +
+        " dockW=" + (dockBox === null ? -1 : Math.round(dockBox.width)) +
+        " gapRight=" + (dockBox === null || viewBox === null ? -1 : Math.round(viewBox.right - dockBox.right)) +
+        " gapBottom=" + (dockBox === null || viewBox === null ? -1 : Math.round(viewBox.bottom - dockBox.bottom)) +
+        " floating=" + (dockBox !== null && viewBox !== null && dockBox.width < viewBox.width * 0.5) +
         " bareBefore=" + beforeChat +
         " bareAfter=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare").length +
         " changed=" + chatApplied.changed +
@@ -526,7 +536,9 @@ const instanceOk = instance !== null &&
   /REFACTOR ok=true items=3 kept=true place=true domItems=3 titles=.*说明/.test(boardText) &&
   boardText.includes("小标题 · 重构后的标题") &&
   // the canvas chat dock exists and a [canvas] op list edits the plane (rename + note too)
-  /CHAT input=true send=true placeholder=\S+ bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText) &&
+  // the canvas chat is a narrow floating panel (340px, inset 16px) and a [canvas] op
+  // list edits the plane (rename + note too)
+  /CHAT input=true send=true placeholder=一句话改画布… dockW=34[02] gapRight=16 gapBottom=16 floating=true bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText) &&
   // any control can be added straight onto the plane, then dragged by its own toolbar
   /ADD menu=true chips=18 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText) &&
   // the bare control followed the pointer by exactly the dispatched delta

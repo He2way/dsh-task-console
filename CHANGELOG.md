@@ -4,6 +4,14 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.20.0
+
+- **The canvas chat is now a narrow floating panel / 画布对话框改为收窄的悬浮样式**: the canvas conversation used to be a full-width bar docked to the bottom edge; it is now a **340px floating glass card in the bottom-right corner** (16px inset, above the plane), so the canvas keeps almost all of its area and the chat is always where the eye already is.
+  - The panel has its own head row: `画布对话` + `▴` (show/hide the transcript) + `—` (shrink the whole panel into a small `💬 改画布` pill, with the log count as a badge, and expand it back). `Esc` in the input does the same, and the input is a compact one-line field (`一句话改画布…`) with a `发送` button.
+  - The transcript scrolls inside the panel (max 190px) instead of pushing the canvas around, and the panel is an overlay: the plane, its panning and its zoom are unaffected.
+- **Tests**: `smoke.mjs` asserts the floating contract (absolute, `right/bottom:16px`, `z-index:40`, `width:340px`, the mini pill rule) plus the head/input markup. `npm run verify:embed` measures the panel in the real browser and asserts **`dockW=342 gapRight=16 gapBottom=16 floating=true`** (340px + borders, inset 16px, well under half the viewport), while still driving a `[canvas]` op list through the canvas and checking the plane updated.
+- **画布对话框收窄改为悬浮**：原来贴底的整条对话栏改成**右下角 340px 的悬浮玻璃卡片**（距边 16px，浮在画布之上），画布面积几乎不被占用。面板自带一行头部：`画布对话` + `▴`（展开/收起对话记录）+ `—`（整块收成 `💬 改画布` 小胶囊，带记录条数，可再展开）；输入框内按 `Esc` 同样收起；输入为一行的 `一句话改画布…` + `发送`。记录在面板内滚动（最高 190px），不再推挤画布；面板本身是覆盖层，画布的平移与缩放完全不受影响。
+
 ## v0.19.0
 
 - **The canvas has its own conversation box / 画布自带对话框**: every canvas (including a card's instance canvas) now carries a docked chat at the bottom — describe the change you want in one sentence and the canvas is edited for you. The dock keeps a collapsible transcript (`▴ 记录`), shows the streaming agent reply, and reports exactly what changed (`已应用：新增控件 1 · 移动 1 · 重命名画布`).
