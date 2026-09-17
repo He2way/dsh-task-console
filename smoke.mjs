@@ -805,6 +805,61 @@ check(
 );
 check("share string rejects foreign text", tc.decodeCanvasShare("hello") === null);
 
+// ---- card maximize -> its own canvas instance ("副本") ----
+const instanceSource = { id: "usr-9", title: "发布清单", blocks: [{ kind: "checklist", key: "todo", items: [{ id: "a", label: "A" }] }, { kind: "embed", url: "http://localhost:5173/", title: "本地应用", height: 300, fill: false }], style: { accent: "emerald", icon: "🚀" } };
+check("instance canvas id is derived from the card id", tc.canvasInstanceId("usr-9") === "cv-inst-usr-9" && tc.isCanvasInstance("cv-inst-usr-9") === true && tc.isCanvasInstance("cv1abc") === false);
+const activeBefore = tc.canvasSnapshot().activeId;
+const instanceId = tc.canvasOpenInstance(instanceSource);
+const instanceCanvas = tc.canvasSnapshot().canvases[instanceId];
+const seeded = Object.values(instanceCanvas.cards);
+check(
+  "maximizing a card creates a seeded instance canvas",
+  instanceId === "cv-inst-usr-9" &&
+    instanceCanvas.name === "副本 · 发布清单" &&
+    seeded.length === 1 &&
+    seeded[0].title === "发布清单" &&
+    seeded[0].blocks.length === 2 &&
+    seeded[0].blocks[1].kind === "embed" &&
+    seeded[0].style.accent === "emerald" &&
+    seeded[0].id !== instanceSource.id
+);
+check("entering an instance does not steal the active canvas seat", tc.canvasSnapshot().activeId === activeBefore);
+check(
+  "re-entering the same card reuses its instance",
+  tc.canvasOpenInstance(instanceSource) === instanceId && Object.keys(tc.canvasSnapshot().canvases[instanceId].cards).length === 1
+);
+const duplicatedId = tc.canvasDuplicateCard(instanceId, seeded[0]);
+check(
+  "instance cards can be duplicated in place",
+  duplicatedId !== null &&
+    duplicatedId !== seeded[0].id &&
+    Object.keys(tc.canvasSnapshot().canvases[instanceId].cards).length === 2 &&
+    tc.canvasSnapshot().canvases[instanceId].cards[duplicatedId].x === seeded[0].x + 44
+);
+const sentBack = tc.canvasSendToBoard(seeded[0]);
+check(
+  "a canvas card can be sent back to the task board",
+  sentBack.ok === true && sentBack.created === true && sentBack.id.startsWith("usr-")
+);
+check("sending the same card back updates the board card", tc.canvasSendToBoard(seeded[0]).created === false);
+tc.applyTaskCardSpec({ op: "delete", title: "发布清单" });
+
+const instanceHtml = renderToString(jsx(tc.TaskCanvasView, {
+  instance: { canvasId: instanceId, cardId: "usr-9", title: "发布清单", source: instanceSource },
+  onClose: () => {},
+}));
+check(
+  "instance canvas bar is bound to the card",
+  instanceHtml.includes("副本画布") &&
+    instanceHtml.includes("放入源卡副本") &&
+    instanceHtml.includes("返回任务台") &&
+    instanceHtml.includes("删除副本") &&
+    instanceHtml.includes("副本 · 发布清单") &&
+    // the normal canvas switcher/creation controls stay out of instance mode
+    instanceHtml.includes("+ 新画布") === false &&
+    instanceHtml.includes("删除画布") === false
+);
+
 const canvas = tc.canvasCreate("测试画布");
 const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });
 check(
@@ -869,7 +924,16 @@ check(
 // ---- fullscreen card view ----
 check(
   "panel: every card carries a fullscreen button",
-  panelHtmlWithDiagramButton.includes("⛶") && panelHtmlWithDiagramButton.includes("全屏显示这张卡片（Esc 退出）")
+  panelHtmlWithDiagramButton.includes("⛶") &&
+    (panelHtmlWithDiagramButton.includes("全屏显示这张卡片（Esc 退出）") || panelHtmlWithDiagramButton.includes("最大化：进入这张卡片的副本画布"))
+);
+const panelUserCardHtml = renderToString(jsx(tc.TaskBackPanel, {
+  useSessions: (selector) => selector(STATE),
+  onClose: () => {},
+}));
+check(
+  "panel: user cards maximize into their instance canvas",
+  panelUserCardHtml.includes("最大化：进入这张卡片的副本画布") && panelUserCardHtml.includes("全屏显示这张卡片")
 );
 const fillAppCard = { title: "应用卡", blocks: [{ kind: "embed", url: "http://localhost:5173/", title: "本地应用", height: 300, fill: true }] };
 const fullHtml = renderToString(jsx(tc.TaskCardFullscreen, {

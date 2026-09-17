@@ -238,18 +238,36 @@ try {
   ReactDOM.flushSync(() => {});
   const cards = document.querySelectorAll(".dsh-tc-card");
   const titles = [...cards].map((node) => (node.querySelector(".dsh-tc-cardTitle") || {}).textContent || "?");
-  const fullButtons = [...document.querySelectorAll(".dsh-tc-cardIconBtn")].filter((node) => (node.getAttribute("title") || "").indexOf("全屏显示") === 0);
-  const target = [...document.querySelectorAll(".dsh-tc-card")].find((node) => (node.textContent || "").indexOf("全屏应用卡") !== -1);
-  const button = target === undefined ? null : [...target.querySelectorAll(".dsh-tc-cardIconBtn")].find((node) => (node.getAttribute("title") || "").indexOf("全屏显示") === 0);
-  if (button !== null && button !== undefined) button.click();
+  const cardOf = (text) => [...document.querySelectorAll(".dsh-tc-card")].find((node) => (node.textContent || "").indexOf(text) !== -1);
+  const buttonOf = (card, prefix) => (card === undefined ? null : [...card.querySelectorAll(".dsh-tc-cardIconBtn")].find((node) => (node.getAttribute("title") || "").indexOf(prefix) === 0) ?? null);
+  const appCardNode = cardOf("全屏应用卡");
+  log("BOARD cards=" + cards.length + " applied=" + JSON.stringify(applied) + " titles=" + titles.join("|"));
+
+  // ---- maximize a user card: it becomes its own canvas instance ("副本") ----
+  const maximize = buttonOf(appCardNode, "最大化");
+  if (maximize !== null) maximize.click();
+  ReactDOM.flushSync(() => {});
+  const view = document.querySelector(".dsh-tc-canvasView");
+  const barTitle = document.querySelector(".dsh-tc-canvasBarTitle");
+  const barText = view === null ? "" : view.querySelector(".dsh-tc-canvasBar").textContent;
+  const planeCards = document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length;
+  const planeApps = document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-app").length;
+  log("INSTANCE view=" + (view !== null) +
+    " title=" + (barTitle === null ? "none" : barTitle.textContent) +
+    " cards=" + planeCards + " apps=" + planeApps +
+    " sourceCopy=" + (barText.indexOf("放入源卡副本") !== -1) +
+    " backToBoard=" + (barText.indexOf("返回任务台") !== -1) +
+    " hasNewCanvas=" + (barText.indexOf("新画布") !== -1));
+
+  // ---- fullscreen overlay from a card inside the instance ----
+  const canvasCard = document.querySelector(".dsh-tc-canvasPlane .dsh-tc-card");
+  const fullButton = buttonOf(canvasCard, "全屏显示");
+  if (fullButton !== null) fullButton.click();
   ReactDOM.flushSync(() => {});
   const overlay = document.querySelector(".dsh-tc-full");
   const shell = document.querySelector(".dsh-tc-fullCard");
   const frame = document.querySelector(".dsh-tc-full .dsh-tc-appFrame");
   const appBody = document.querySelector(".dsh-tc-full .dsh-tc-app");
-  log("BOARD cards=" + cards.length + " fullButtons=" + fullButtons.length +
-    " applied=" + JSON.stringify(applied) + " target=" + (target !== undefined) + " button=" + (button !== null && button !== undefined) +
-    " titles=" + titles.join("|"));
   log("FULL overlay=" + (overlay !== null) +
     " shell=" + (shell === null ? -1 : shell.offsetHeight) +
     " app=" + (appBody === null ? -1 : appBody.offsetHeight) +
@@ -257,14 +275,20 @@ try {
     " appFill=" + (document.querySelector(".dsh-tc-full .dsh-tc-appFill") !== null) +
     " viewport=" + window.innerWidth + "x" + window.innerHeight +
     " hint=" + (document.querySelector(".dsh-tc-fullHint") === null ? "none" : document.querySelector(".dsh-tc-fullHint").textContent));
-  // Esc closes it again (the listener lives on document) …
+  // Esc closes the overlay only — the instance canvas stays open underneath. The extra
+  // flush lets React run the canvas' passive effect so its Escape guard sees fullId.
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   ReactDOM.flushSync(() => {});
-  const closed = document.querySelector(".dsh-tc-full") === null;
-  // … and reopening keeps the overlay visible for the screenshot taken at the end.
-  if (button !== null && button !== undefined) button.click();
   ReactDOM.flushSync(() => {});
-  log("CLOSED overlay=" + closed + " reopened=" + (document.querySelector(".dsh-tc-full") !== null));
+  log("ESCAPE overlay=" + (document.querySelector(".dsh-tc-full") === null) + " instance=" + (document.querySelector(".dsh-tc-canvasView") !== null));
+
+  // ---- derive a variant inside the instance and leave it open for the screenshot ----
+  const planeCard = document.querySelector(".dsh-tc-canvasPlane .dsh-tc-card");
+  const duplicate = planeCard === null ? null : buttonOf(planeCard, "复制这张卡片");
+  if (duplicate !== null) duplicate.click();
+  ReactDOM.flushSync(() => {});
+  log("DERIVE cards=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length +
+    " apps=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-app").length);
 } catch (error) {
   log("ERROR " + (error && error.message ? error.message : String(error)));
 }
@@ -277,7 +301,7 @@ writeFileSync(harness, page);
 const boardHarness = join(OUT, "board.html");
 writeFileSync(boardHarness, boardPage);
 const shot = join(OUT, "card-embed.png");
-const boardShot = join(OUT, "card-fullscreen.png");
+const boardShot = join(OUT, "card-instance.png");
 
 // Chrome runs asynchronously on purpose: execFileSync would block this process'
 // event loop, so the local app server could never answer the iframe requests.
@@ -353,12 +377,22 @@ const ok = text.includes("apps=4") &&
   Math.abs(zoomAfter - (zoomBefore + Math.round(120 / zoomScale))) <= 1 &&
   zoomCommitted.cardId === "usr-d" &&
   zoomCommitted.height === zoomAfter;
+const instance = /INSTANCE view=(\w+) title=(\S+) cards=(\d+) apps=(\d+) sourceCopy=(\w+) backToBoard=(\w+) hasNewCanvas=(\w+)/.exec(boardText);
 const full = /FULL overlay=(\w+) shell=(-?\d+) app=(-?\d+) frame=(-?\d+) appFill=(\w+) viewport=(\d+)x(\d+) hint=(.*)/.exec(boardText);
 const shellHeight = full === null ? -1 : Number(full[2]);
 const frameHeight = full === null ? -1 : Number(full[4]);
 const viewportHeight = full === null ? -1 : Number(full[7]);
+const instanceOk = instance !== null &&
+  instance[1] === "true" &&
+  instance[2] === "副本画布" &&
+  instance[3] === "1" &&
+  instance[4] === "1" &&
+  instance[5] === "true" &&
+  instance[6] === "true" &&
+  // instance mode hides the normal canvas management controls
+  instance[7] === "false" &&
+  boardText.includes("DERIVE cards=2 apps=2");
 const fullOk = boardText.includes("BOARD cards=") &&
-  boardText.includes("fullButtons=") &&
   full !== null &&
   full[1] === "true" &&
   full[5] === "true" &&
@@ -366,6 +400,7 @@ const fullOk = boardText.includes("BOARD cards=") &&
   // the fullscreen shell is nearly the whole viewport and the app fills it
   shellHeight > viewportHeight * 0.85 &&
   frameHeight > viewportHeight * 0.6 &&
-  boardText.includes("CLOSED overlay=true reopened=true");
-console.log(ok && fullOk ? "ALL PASS" : "FAILURES");
-process.exit(ok && fullOk ? 0 : 1);
+  // Esc closes the overlay but keeps the instance canvas underneath
+  boardText.includes("ESCAPE overlay=true instance=true");
+console.log(ok && instanceOk && fullOk ? "ALL PASS" : "FAILURES");
+process.exit(ok && instanceOk && fullOk ? 0 : 1);

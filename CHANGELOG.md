@@ -4,6 +4,18 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.15.0
+
+- **Maximizing a card turns it into a canvas — its own instance / 卡片最大化后变成画布（副本）**: a user card's `⛶` no longer just shows a big card, it **opens the card's own canvas instance** — a private workspace seeded with an independent copy of that card, centered in view, like entering an instance in a game:
+  - Pan/zoom freely, move/resize cards, drop or paste images, refactor cards by talking (`💬`), edit them (`✎`), open one fullscreen (`⛶`), **derive variants with `⧉` 复制**, and **send a card back to the board with `📥` 发回任务台** (creates it, or updates the card with the same title).
+  - The instance is **created on first use and reused afterwards** (canvas id `cv-inst-<cardId>`, name `副本 · <卡片标题>`), so leaving and coming back finds exactly what you left — and it is a normal canvas underneath: share string, relay collaboration and presence all work.
+  - The bar is instance-aware: no canvas switcher / `+ 新画布` / `删除画布`, instead `⟲ 放入源卡副本` (re-copy the board card's current content into the instance) and `删除副本`; the close button becomes `返回任务台`. Instance canvases stay out of the normal canvas switcher so it does not fill up with copies.
+  - Publishing into an explicitly named canvas no longer steals the "active canvas" seat, so entering an instance leaves the main canvas view untouched.
+  - Built-in read-only cards (session / jobs / subagents / workspace / plugins) keep the plain fullscreen view — there is nothing to copy into a workspace.
+- **Fixed stale-keydown layering**: the canvas' Escape guard now reads refs instead of the effect closure, so the first Escape after opening an overlay above the canvas (card fullscreen / editor / chat) closes only that overlay and leaves the canvas open — caught by the browser check, which had shown the canvas closing underneath.
+- **Tests**: `smoke.mjs` covers the instance id, seeding (name, blocks, style, independent copy), idempotent re-entry, the active-canvas seat, `⧉` duplication, `📥` send-to-board (create then update), and the instance bar's SSR (no switcher/creation controls). `npm run verify:embed`'s board phase now maximizes a real user card, asserts the instance view (`副本画布`, 1 seeded card with a live embedded app, no `+ 新画布`), opens the card fullscreen from inside it (overlay fills the viewport), asserts Escape closes only the overlay, duplicates a card, and screenshots the instance with both cards.
+- **卡片最大化后变成画布（副本）**：自定义卡片的 `⛶` 现在直接进入**这张卡片的副本画布**——以该卡片的独立副本为中心播下的专属工作区，像进游戏副本一样：自由平移缩放、拖拽/缩放卡片、粘贴图片、`💬` 对话重构、`✎` 编辑、`⛶` 单卡全屏、`⧉` 原地衍生副本、`📥` 把卡片发回任务台（同名则更新）。副本画布首次进入时创建、之后一直复用（id `cv-inst-<卡片id>`、名称 `副本 · 卡片标题`），退出再进还是原样；底层就是普通画布，分享串、中继协作、在线状态照常可用。副本模式隐藏画布切换器 / `+ 新画布` / `删除画布`，改为 `⟲ 放入源卡副本`、`删除副本`，关闭按钮变成 `返回任务台`；副本画布不会出现在普通画布下拉里。内置只读卡片仍走普通全屏视图。
+
 ## v0.14.0
 
 - **Any card can go fullscreen / 卡片可以全屏**: every card — built-in (session / jobs / subagents / workspace / plugins) and user cards, on the board and on the infinite canvas — carries a `⛶` button that opens it as a **fullscreen view over the whole workbench** (up to 1680×1200, otherwise 97 % × 94 % of the viewport). The very same card body is rendered large, so nothing is duplicated or lost:
