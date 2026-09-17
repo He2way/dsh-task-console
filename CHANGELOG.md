@@ -4,6 +4,15 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.14.0
+
+- **Any card can go fullscreen / 卡片可以全屏**: every card — built-in (session / jobs / subagents / workspace / plugins) and user cards, on the board and on the infinite canvas — carries a `⛶` button that opens it as a **fullscreen view over the whole workbench** (up to 1680×1200, otherwise 97 % × 94 % of the viewport). The very same card body is rendered large, so nothing is duplicated or lost:
+  - An **embedded web app** takes the entire screen; with `fill: true` it stretches to the fullscreen body (verified in headless Chrome: a 666px shell inside a 706px viewport, the app filling 590px of it).
+  - `Esc`, the backdrop, or `✕` closes it; the header keeps the card's own actions (`📌` pin, `📤` publish, `💬` refactor, `✎` edit) so you can keep working without leaving the fullscreen view, and `⤢` additionally asks the browser for **real fullscreen** (hidden browser chrome) — Esc then belongs to the browser first, so leaving browser-fullscreen does not also close the card.
+  - The overlay is a proper dialog (`role="dialog"`, `aria-modal`, labelled with the card title) and works inside the flipped panel because it positions against the viewport.
+- **Tests**: `smoke.mjs` checks the fullscreen button on the board panel, a standalone board card and the canvas cards, that the overlay renders its shell/header/hint/actions/`data-fill` with the live body (including the embedded app inside it), and that a card without a `fill` app scrolls instead of stretching. `npm run verify:embed` gained a second headless-Chrome phase that mounts the **real board panel**, creates an app card through the `[taskcard]` store API, clicks `⛶`, asserts the overlay/shell/app/frame sizes plus the Esc-close/reopen, and screenshots the fullscreen app.
+- **卡片可以全屏**：内置卡片（会话 / 后台任务 / 子代理 / 工作区 / 插件）和自定义卡片、任务台与无限画布上的卡片都多了 `⛶` 按钮，点一下就以全屏视图铺满整个工作台（最大 1680×1200，否则 97% × 95% 视口）。渲染的是同一份卡片内容，内嵌网页应用因此可以直接占满整屏（`fill: true` 时铺满全屏视图）；`Esc`、点空白处或 `✕` 退出，头部保留卡片自己的按钮（📌 置顶 / 📤 发布 / 💬 重构 / ✎ 编辑），`⤢` 还能让浏览器进入真·全屏（连浏览器界面一起隐藏；此时 Esc 先交给浏览器，不会顺手把卡片也关掉）。弹层带 `role="dialog"` / `aria-modal`，在翻面面板里也按视口定位。
+
 ## v0.13.0
 
 - **Drag the embedded app to resize it / 内嵌网页可拖动调整大小**: every embedded web app now has a **grip on its bottom edge** — drag it up or down and the frame follows your pointer (rAF + inline height, no React render per move); the live pixel value is shown in a small chip while dragging, and the new height is **committed once on release** and persisted on that block (`height`), broadcast to collaborators when the card is on the canvas. `fill` apps show no grip: they follow the card's own bottom-right resize handle.

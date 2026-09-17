@@ -62,7 +62,7 @@ const server = createServer((request, response) => {
 });
 await new Promise((resolve) => server.listen(PORT, "127.0.0.1", resolve));
 
-const page = `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>embed check</title>
+const pageHead = (title, extraCss) => `<!DOCTYPE html><html lang="zh"><head><meta charset="utf-8"><title>${title}</title>
 <style>
 :root{--dsw-alias-label-primary:#0f172a;--dsw-alias-label-secondary:#475569;--dsw-alias-label-tertiary:#8a94a6;
 --dsw-alias-state-business-primary:#3b82f6;--dsw-alias-bg-primary:#ffffff;--dsw-alias-border-secondary:rgba(148,163,184,.4)}
@@ -70,14 +70,13 @@ html,body{margin:0;height:100%;background:#eef2ff;font:13px/1.5 system-ui,"Segoe
 /* the entry animation would scale the cards while the gesture runs; the layout math must
    be checked without that extra factor (the scaled-card case below adds its own) */
 .dsh-tc-card{animation:none!important}
-#zoomed{position:absolute;left:520px;top:520px;transform:scale(1.5);transform-origin:0 0}
+${extraCss}
 </style></head>
-<body>
-<div class="dsh-tc-panel" data-theme="light" style="position:fixed;inset:0;transform:none">
-  <div id="stage" class="dsh-tc-canvas" style="position:relative;width:100%;height:100%"></div>
-  <div id="zoomed" class="dsh-tc-canvas" style="width:420px;height:420px"></div>
-</div>
-<pre id="log" style="position:fixed;left:8px;bottom:8px;margin:0;font-size:11px;color:#334155"></pre>
+<body>`;
+
+const pageTail = `</body></html>`;
+
+const pageScripts = `<pre id="log" style="position:fixed;left:8px;bottom:8px;margin:0;font-size:11px;color:#334155;z-index:2147483700"></pre>
 <script src="file:///${reactUmd.replace(/\\/g, "/")}"></script>
 <script src="file:///${reactDomUmd.replace(/\\/g, "/")}"></script>
 <script>window.__ModuleLoader__ = { load(entry) { window.__factory = entry.factory; } };</script>
@@ -99,6 +98,15 @@ const requireShim = (spec) => {
   if (spec === "react-dom") return { createPortal: ReactDOM.createPortal };
   throw new Error("unexpected require " + spec);
 };
+<\/script>
+`;
+
+const page = pageHead("embed check", `#zoomed{position:absolute;left:520px;top:520px;transform:scale(1.5);transform-origin:0 0}`) + `
+<div class="dsh-tc-panel" data-theme="light" style="position:fixed;inset:0;transform:none">
+  <div id="stage" class="dsh-tc-canvas" style="position:relative;width:100%;height:100%"></div>
+  <div id="zoomed" class="dsh-tc-canvas" style="width:420px;height:420px"></div>
+</div>
+` + pageScripts + `<script>
 try {
   const tc = window.__factory(requireShim).__dshTestHooks;
   const boardRef = { current: document.getElementById("stage") };
@@ -202,17 +210,83 @@ try {
 <\/script>
 </body></html>`;
 
+// ---- phase 2: the real task board, with a card opened fullscreen ----
+// The panel is normally un-rotated by the flip container's [data-settled] rule; the
+// harness has no flip wrapper, so it neutralises the back-face transform itself.
+const boardPage = pageHead("fullscreen check", `.dsh-tc-panel{transform:none!important;backface-visibility:visible!important}`) + `
+<div class="dsh-tc-panel" data-theme="light" style="position:fixed;inset:0;transform:none">
+  <div id="board" class="dsh-tc-canvas" style="position:relative;width:100%;height:100%"></div>
+</div>
+` + pageScripts + `<script>
+try {
+  const tc = window.__factory(requireShim).__dshTestHooks;
+  const STATE = {
+    current: "s1",
+    byId: { s1: { id: "s1", displayTitle: "测试会话", running: true, cwd: "D:/demo", updatedAt: Date.now() - 4000, origin: "root" } },
+    jobsBySession: { s1: [] },
+    subagentsByParent: { s1: { entries: [] } },
+    phase: "ready"
+  };
+  const useSessions = (selector) => selector(STATE);
+  const url = "http://127.0.0.1:${PORT}/";
+  // Create the app card in the store before mounting the panel: the panel reads the
+  // store in its state initializer, so no extra render tick is needed here.
+  const applied = tc.applyTaskCardSpec({ op: "upsert", title: "全屏应用卡", blocks: [{ kind: "embed", url, title: "本地应用 · 全屏", fill: true }] });
+  ReactDOM.flushSync(() => {
+    ReactDOM.createRoot(document.getElementById("board")).render(jsx(tc.TaskBackPanel, { useSessions, onClose: () => {}, plugins: undefined }));
+  });
+  ReactDOM.flushSync(() => {});
+  const cards = document.querySelectorAll(".dsh-tc-card");
+  const titles = [...cards].map((node) => (node.querySelector(".dsh-tc-cardTitle") || {}).textContent || "?");
+  const fullButtons = [...document.querySelectorAll(".dsh-tc-cardIconBtn")].filter((node) => (node.getAttribute("title") || "").indexOf("全屏显示") === 0);
+  const target = [...document.querySelectorAll(".dsh-tc-card")].find((node) => (node.textContent || "").indexOf("全屏应用卡") !== -1);
+  const button = target === undefined ? null : [...target.querySelectorAll(".dsh-tc-cardIconBtn")].find((node) => (node.getAttribute("title") || "").indexOf("全屏显示") === 0);
+  if (button !== null && button !== undefined) button.click();
+  ReactDOM.flushSync(() => {});
+  const overlay = document.querySelector(".dsh-tc-full");
+  const shell = document.querySelector(".dsh-tc-fullCard");
+  const frame = document.querySelector(".dsh-tc-full .dsh-tc-appFrame");
+  const appBody = document.querySelector(".dsh-tc-full .dsh-tc-app");
+  log("BOARD cards=" + cards.length + " fullButtons=" + fullButtons.length +
+    " applied=" + JSON.stringify(applied) + " target=" + (target !== undefined) + " button=" + (button !== null && button !== undefined) +
+    " titles=" + titles.join("|"));
+  log("FULL overlay=" + (overlay !== null) +
+    " shell=" + (shell === null ? -1 : shell.offsetHeight) +
+    " app=" + (appBody === null ? -1 : appBody.offsetHeight) +
+    " frame=" + (frame === null ? -1 : frame.offsetHeight) +
+    " appFill=" + (document.querySelector(".dsh-tc-full .dsh-tc-appFill") !== null) +
+    " viewport=" + window.innerWidth + "x" + window.innerHeight +
+    " hint=" + (document.querySelector(".dsh-tc-fullHint") === null ? "none" : document.querySelector(".dsh-tc-fullHint").textContent));
+  // Esc closes it again (the listener lives on document) …
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  ReactDOM.flushSync(() => {});
+  const closed = document.querySelector(".dsh-tc-full") === null;
+  // … and reopening keeps the overlay visible for the screenshot taken at the end.
+  if (button !== null && button !== undefined) button.click();
+  ReactDOM.flushSync(() => {});
+  log("CLOSED overlay=" + closed + " reopened=" + (document.querySelector(".dsh-tc-full") !== null));
+} catch (error) {
+  log("ERROR " + (error && error.message ? error.message : String(error)));
+}
+<\/script>
+</body></html>`;
+
 mkdirSync(OUT, { recursive: true });
 const harness = join(OUT, "index.html");
 writeFileSync(harness, page);
+const boardHarness = join(OUT, "board.html");
+writeFileSync(boardHarness, boardPage);
 const shot = join(OUT, "card-embed.png");
+const boardShot = join(OUT, "card-fullscreen.png");
 
 // Chrome runs asynchronously on purpose: execFileSync would block this process'
 // event loop, so the local app server could never answer the iframe requests.
 // One invocation both screenshots the page and dumps its DOM — two back-to-back
 // instances race and the second one can come back empty.
-const runChrome = (args) => new Promise((resolve) => {
-  const profile = join(OUT, "chrome-profile");
+let runIndex = 0;
+const runChrome = (args, profileName) => new Promise((resolve) => {
+  runIndex += 1;
+  const profile = join(OUT, "chrome-profile-" + profileName + "-" + runIndex);
   // A fresh profile per run: a reused one can serve the previously loaded
   // bundle from its cache, which would verify the old client.js.
   rmSync(profile, { recursive: true, force: true });
@@ -221,21 +295,35 @@ const runChrome = (args) => new Promise((resolve) => {
   child.stdout.on("data", (chunk) => { out += chunk; });
   child.on("exit", () => resolve(out));
 });
-const url = "file:///" + harness.replace(/\\/g, "/");
+const fileUrl = (path) => "file:///" + path.replace(/\\/g, "/");
 const dom = await runChrome([
   "--headless=new", "--disable-gpu", "--no-first-run", "--no-sandbox", "--hide-scrollbars",
   "--allow-file-access-from-files", "--virtual-time-budget=9000", "--window-size=1000,900",
-  "--screenshot=" + shot, "--dump-dom", url,
-]);
+  "--screenshot=" + shot, "--dump-dom", fileUrl(harness),
+], "drag");
+const boardDom = await runChrome([
+  "--headless=new", "--disable-gpu", "--no-first-run", "--no-sandbox", "--hide-scrollbars",
+  "--allow-file-access-from-files", "--virtual-time-budget=9000", "--window-size=1280,860",
+  "--screenshot=" + boardShot, "--dump-dom", fileUrl(boardHarness),
+], "full");
 server.close();
 
-const report = /<pre id="log"[^>]*>([\s\S]*?)<\/pre>/.exec(dom);
-if (process.env.DSH_EMBED_DEBUG === "1") writeFileSync(join(OUT, "dom-dump.html"), dom);
-const text = report === null ? "" : report[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+const readReport = (source) => {
+  const report = /<pre id="log"[^>]*>([\s\S]*?)<\/pre>/.exec(source);
+  return report === null ? "" : report[1].replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+};
+if (process.env.DSH_EMBED_DEBUG === "1") {
+  writeFileSync(join(OUT, "dom-dump.html"), dom);
+  writeFileSync(join(OUT, "dom-board.html"), boardDom);
+}
+const text = readReport(dom);
+const boardText = readReport(boardDom);
 console.log("browser   ", chrome);
-console.log("screenshot", shot);
-console.log("dom bytes ", dom.length);
+console.log("screenshots", shot + " | " + boardShot);
+console.log("---- cards/embed harness ----");
 console.log(text === "" ? "no page report" : text);
+console.log("---- board/fullscreen harness ----");
+console.log(boardText === "" ? "no page report" : boardText);
 const sizes = /DRAG wrapBefore=(\d+) wrapAfter=(\d+) frameBefore=(\d+) frameAfter=(\d+) committed=(\[.*\])/.exec(text);
 const zoom = /ZOOMED scale=([\d.]+) layoutBefore=(\d+) layoutAfter=(\d+) rectAfter=(-?\d+) committed=(\{.*\})/.exec(text);
 const committed = sizes === null ? [] : JSON.parse(sizes[5]);
@@ -265,5 +353,19 @@ const ok = text.includes("apps=4") &&
   Math.abs(zoomAfter - (zoomBefore + Math.round(120 / zoomScale))) <= 1 &&
   zoomCommitted.cardId === "usr-d" &&
   zoomCommitted.height === zoomAfter;
-console.log(ok ? "ALL PASS" : "FAILURES");
-process.exit(ok ? 0 : 1);
+const full = /FULL overlay=(\w+) shell=(-?\d+) app=(-?\d+) frame=(-?\d+) appFill=(\w+) viewport=(\d+)x(\d+) hint=(.*)/.exec(boardText);
+const shellHeight = full === null ? -1 : Number(full[2]);
+const frameHeight = full === null ? -1 : Number(full[4]);
+const viewportHeight = full === null ? -1 : Number(full[7]);
+const fullOk = boardText.includes("BOARD cards=") &&
+  boardText.includes("fullButtons=") &&
+  full !== null &&
+  full[1] === "true" &&
+  full[5] === "true" &&
+  full[8].includes("Esc") &&
+  // the fullscreen shell is nearly the whole viewport and the app fills it
+  shellHeight > viewportHeight * 0.85 &&
+  frameHeight > viewportHeight * 0.6 &&
+  boardText.includes("CLOSED overlay=true reopened=true");
+console.log(ok && fullOk ? "ALL PASS" : "FAILURES");
+process.exit(ok && fullOk ? 0 : 1);

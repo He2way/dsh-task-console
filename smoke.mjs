@@ -866,5 +866,53 @@ check(
   panelHtmlWithDiagramButton.includes("🗺 框图") && panelHtmlWithDiagramButton.includes("在右侧显示当前项目的逻辑框图")
 );
 
+// ---- fullscreen card view ----
+check(
+  "panel: every card carries a fullscreen button",
+  panelHtmlWithDiagramButton.includes("⛶") && panelHtmlWithDiagramButton.includes("全屏显示这张卡片（Esc 退出）")
+);
+const fillAppCard = { title: "应用卡", blocks: [{ kind: "embed", url: "http://localhost:5173/", title: "本地应用", height: 300, fill: true }] };
+const fullHtml = renderToString(jsx(tc.TaskCardFullscreen, {
+  title: "应用卡",
+  badge: "置顶",
+  layout: { style: { accent: "blue", icon: "🌐" } },
+  fill: true,
+  actions: [{ key: "pin", icon: "📌", title: "取消置顶", onClick: () => {} }],
+  onClose: () => {},
+  children: jsx(tc.TaskUserBody, { card: fillAppCard, cardId: "usr-1", onWidget: () => {}, onWidgetState: () => {} }),
+}));
+check(
+  "fullscreen card renders its shell, header, hint and the live body",
+  fullHtml.includes("dsh-tc-full") &&
+    fullHtml.includes("dsh-tc-fullCard") &&
+    fullHtml.includes("dsh-tc-fullHead") &&
+    fullHtml.includes('data-fill="1"') &&
+    fullHtml.includes("应用卡") &&
+    fullHtml.includes("置顶") &&
+    fullHtml.includes("🌐") &&
+    fullHtml.includes("Esc 或点空白处退出") &&
+    fullHtml.includes("浏览器全屏") &&
+    fullHtml.includes("退出全屏（Esc）") &&
+    fullHtml.includes('role="dialog"') &&
+    fullHtml.includes('aria-modal="true"') &&
+    // the embedded app travels into the fullscreen view and fills it
+    fullHtml.includes("dsh-tc-app") &&
+    fullHtml.includes("dsh-tc-appFill") &&
+    fullHtml.includes('src="http://localhost:5173/"')
+);
+const fullPlainHtml = renderToString(jsx(tc.TaskCardFullscreen, { title: "任务", layout: {}, onClose: () => {}, children: "内容" }));
+check(
+  "fullscreen card without a fill app scrolls instead of stretching",
+  fullPlainHtml.includes("dsh-tc-fullBody") && !fullPlainHtml.includes('data-fill="1"') && fullPlainHtml.includes("内容")
+);
+const boardCardHtml = renderToString(jsx(tc.TaskCard, {
+  id: "usr-1", title: "卡片", layout: { x: 0, y: 0 }, zIndex: 1, boardRef: { current: null },
+  actions: [{ key: "full", icon: "⛶", title: "全屏显示这张卡片（Esc 退出）", onClick: () => {} }],
+  onDragCommit: () => {}, onResizeCommit: () => {},
+  children: "正文",
+}));
+check("card header renders the fullscreen button", boardCardHtml.includes("⛶") && boardCardHtml.includes("全屏显示这张卡片"));
+check("canvas cards expose the fullscreen action", renderToString(jsx(tc.TaskCanvasView, { onClose: () => {} })).includes("全屏显示这张卡片"));
+
 console.log(failed === 0 ? "ALL PASS" : `${failed} FAILURES`);
 process.exit(failed === 0 ? 0 : 1);
