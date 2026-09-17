@@ -228,6 +228,20 @@ npm run verify:diagram        # headless-Chrome check of the embedded diagram fr
 npm run verify:embed          # headless-Chrome checks: sandboxed frames, real grip drag
                               # (board + 1.5x plane) and the fullscreen card overlay
 ```
+
+### Releasing / 发布
+
+`prepack` runs the syntax check and the smoke suite, so `npm pack` / `npm publish` can never ship a broken bundle.
+
+```bash
+npm version patch            # bumps package.json (+ commit/tag if you use them)
+npm pack                     # build the tarball, and attach it to the GitHub release
+npm publish                  # publish to npm (needs `npm login` / NPM_TOKEN)
+gh release upload vX.Y.Z dsh-task-console-X.Y.Z.tgz#dsh-task-console.tgz --clobber
+```
+
+The release asset is deliberately named **without** a version so `releases/latest/download/dsh-task-console.tgz` (used by the README and the plugin-market entry) never rots.
+
 ## Changelog / 变更记录
 
 Release history: [CHANGELOG.md](./CHANGELOG.md)（版本历史见 [CHANGELOG.md](./CHANGELOG.md)）。

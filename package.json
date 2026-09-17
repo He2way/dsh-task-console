@@ -79,6 +79,8 @@
     "test:relay": "node relay/smoke.mjs",
     "embed:diagram": "node tools/embed-diagram.mjs",
     "verify:diagram": "node tools/verify-diagram-browser.mjs",
-    "verify:embed": "node tools/verify-embed-browser.mjs"
+    "verify:embed": "node tools/verify-embed-browser.mjs",
+    "prepack": "node --check lib/client.js && node smoke.mjs",
+    "release": "npm publish"
   }
 }
