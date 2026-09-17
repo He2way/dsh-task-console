@@ -33,10 +33,22 @@ Requires a DSH profile (default: `web`). The package declares `dsh.bundle`, so `
 
 需要 DSH profile（默认 `web`）。本包声明了 `dsh.bundle`，`dsh plugin` 会自动把它加入 profile 的 bundle 列表，无需手动改 patch。
 
-### From npm / 从 npm 安装（发布后）
+### From the plugin market / 从插件市场安装
+
+Listed in the community DSH plugin markets ([awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) → [dsh-market](https://github.com/dsh-market/dsh-market), [dsh-plugin-market](https://github.com/NanmiCoder/dsh-plugin-market)) as **`He2way/dsh-task-console`**, category **ui**. Install the market, then either one-click install there or use the command below.
+
+已收录进社区插件市场（`awesome-dsh-plugin` 及其下游市场）条目 **`He2way/dsh-task-console`**，分类 **ui**。装上市场后可在里面一键安装，或直接用下面的命令。
+
+### From npm / 从 npm 安装
 
 ```bash
 dsh plugin --profile web add dsh-task-console
+```
+
+### From a GitHub release tarball / 从 GitHub Release 的 tarball 安装
+
+```bash
+dsh plugin --profile web add https://github.com/He2way/dsh-task-console/releases/latest/download/dsh-task-console.tgz
 ```
 
 ### From GitHub / 从 GitHub 安装

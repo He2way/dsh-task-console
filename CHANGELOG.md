@@ -4,6 +4,15 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.22.0
+
+- **Published to the DSH plugin market / 发布到 DSH 插件市场**: the plugin is submitted to the curated registry behind the community plugin markets (`awesome-dsh-plugin`, which feeds `dsh-market` and the storefronts) as `He2way/dsh-task-console`, category **ui**, with a prebuilt tarball attached to the GitHub release so one-click installs skip the build-approval step.
+  - Repository metadata brought in line with the submission rules: the **`dsh-plugin` topic** is set, `dsh.bundle` + `cordis.patch.yml` are in place (what makes `dsh plugin add` work), the repo is well past the 1-day age bar, and the description now states what the plugin actually does.
+  - `screenshots.json` declares two real UI screenshots (`docs/screenshots/canvas-and-chat.png`, `embedded-web-apps.png`, both generated from the headless-browser verification runs), which the markets show AppStore-style on the detail page.
+  - `engines.dsh` now declares the tested harness range (`>=0.1.5-rc.1 <0.2.0-0`) so host-aware catalog filters can compare against the running DSH.
+  - Install paths for users: `dsh plugin --profile web add dsh-task-console` (npm, once published), the GitHub release tarball, or the repository spec.
+- **发布到 DSH 插件市场**：本项目已提交到社区插件市场背后的精选列表（`awesome-dsh-plugin`，dsh-market 及各商店的数据源），条目为 `He2way/dsh-task-console`，分类 **ui**，并在 GitHub Release 上附带预构建 tarball，让一键安装无需构建授权。仓库元数据也按投稿规则对齐：已设置 **`dsh-plugin` topic**、`dsh.bundle` 与 `cordis.patch.yml` 齐备（这是 `dsh plugin add` 可安装的前提）、仓库年龄远超 1 天门槛，描述也改成如实说明功能。新增 `screenshots.json` 声明两张真实界面截图（`docs/screenshots/canvas-and-chat.png`、`embedded-web-apps.png`，均由 headless 浏览器验证流程生成），市场会在详情页以 App Store 风格展示。`engines.dsh` 声明了实测的 harness 版本范围（`>=0.1.5-rc.1 <0.2.0-0`），便于市场做宿主兼容性判断。
+
 ## v0.21.0
 
 - **The canvas chat is centred / 画布对话框居中**: the floating panel now sits **horizontally centred 16px above the bottom edge** (`left:0; right:0; margin:0 auto`) instead of pinned to the right corner, so it reads like a command bar under the plane; its mini pill centres itself too, and the entry animation is now a short rise from the bottom (`translateY(14px)`) instead of a sideways slide that would fight the centring.

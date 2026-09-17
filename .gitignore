@@ -6,3 +6,6 @@ npm-debug.log*
 .idea/
 coverage/
 *.tgz
+
+# release artifact built by npm pack (uploaded to the GitHub release)
+*.tgz
