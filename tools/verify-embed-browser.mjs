@@ -571,8 +571,32 @@ try {
               " hosts=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-pluginHost").length +
               " error=" + JSON.stringify(clickError) +
               " noticeGone=" + (document.querySelector(".dsh-tc-notice") === null));
-            tc.stopTaskCardWatcher();
-            row.remove();
+            const planCards = document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length;
+            // The reply that really failed on this canvas (transcribed from the session): every
+            // block named its kind as the key instead of using the kind field. Nothing may land
+            // as an "unsupported control" box — the controls have to be built.
+            const planRow = document.createElement("div");
+            planRow.setAttribute("data-chat-anchor-key", "conv-canvas-2");
+            planRow.setAttribute("data-chat-flow-kind", "assistant");
+            planRow.style.display = "none";
+            planRow.textContent = '[canvas] { "canvas": "主对话画布", "ops": [ { "op": "addCard", "title": "股市趋势", "blocks": [ { "heading": "股市趋势", "text": "主要指数与板块表现（示意数据）" }, { "stats": [ { "label": "上证指数", "value": "3,215.42" } ] }, { "trend": { "label": "上证指数", "unit": "点", "values": [3178.4, 3192.1, 3169.8] } }, { "kv": { "rows": [ [ "上证指数", "3,215.42" ] ] } }, { "note": { "text": "示意样本。" } } ] }, { "op": "add", "kind": "trend", "x": 700, "y": 560, "label": "深证成指", "values": [10180.2, 10210.6] } ] } [/canvas]';
+            document.body.appendChild(planRow);
+            return waitFor(() => document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare[data-kind=\\"trend\\"]").length > 0, 15000).then((built) => {
+              const unsupported = document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-wUnsupported");
+              const kinds = [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare")].map((node) => node.getAttribute("data-kind")).sort().join(",");
+              const shapes = [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare[data-kind=\\"trend\\"]")].map((node) => node.querySelectorAll("svg, .dsh-tc-trendPt").length);
+              const convCanvasNow = convCanvasOf();
+              log("RECORDED built=" + built +
+                " cards=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-card").length + "(was " + planCards + ")" +
+                " bare=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare").length +
+                " kinds=" + kinds +
+                " unsupported=" + unsupported.length +
+                " trendMarks=" + shapes.join("/") +
+                " stored=" + JSON.stringify(convCanvasNow === null ? "none" : Object.values(convCanvasNow.cards).map((item) => (item.blocks ?? []).map((block) => block.kind).join("+")).join("|")));
+              tc.stopTaskCardWatcher();
+              row.remove();
+              planRow.remove();
+            });
       });
     });
   };
@@ -829,6 +853,10 @@ const instanceOk = instance !== null &&
   // the canvas it names, and the board shows a notice that opens exactly that canvas
   /CONVERSATION applied=true canvas=active items=1 plugin=true state=mounted notice="画布「主对话画布」已应用：新增插件 1"/.test(boardText) &&
   /CONVERSATIONCLICK view=true name="主对话画布" active=true hosts=1 error="none" noticeGone=true/.test(boardText) &&
+  // the reply that failed on this canvas (kind written as the key) now builds real controls:
+  // the five-control card plus the bare trend item, and no "unsupported" boxes at all
+  /RECORDED built=true cards=\d+\(was \d+\) bare=1 kinds=trend unsupported=0 trendMarks=[1-9]/.test(boardText) &&
+  /RECORDED .*stored="[^"]*heading\+stats\+trend\+kv\+note/.test(boardText) &&
   // the agent operated the real embedded page through the bridge
   /BRIDGE state=connected title="本地应用" ok=true count=4 clicks=2 badge=受控 · 已连接/.test(boardText);
 const fullOk = boardText.includes("BOARD cards=") &&

@@ -1517,6 +1517,122 @@ check(
 );
 offNotice();
 
+// ---- control shapes a conversation really writes (regression: canvas 新建控件 failed) ----
+// Every control kind must survive a second sanitize: the canvas paths re-sanitize what the
+// parser produced (add / adopt / explode / update), so a kind whose own canonical shape is not
+// accepted back silently disappears. `trend` used to (its `items` were never read).
+const doubleSanitize = [];
+for (const kind of tc.TASK_BLOCK_KINDS) {
+  const once = tc.sanitizeTaskBlock(tc.taskBlockDefault(kind), 0);
+  const twice = once === null ? null : tc.sanitizeTaskBlock(once, 0);
+  if (once === null || twice === null || JSON.stringify(twice) !== JSON.stringify(once)) {
+    doubleSanitize.push(kind + (once === null ? ":dropped" : twice === null ? ":lost" : ":changed"));
+  }
+}
+// `image` is not in the add menu (it is created by pasting), so it gets a real source here.
+const imageOnce = tc.sanitizeTaskBlock({ kind: "image", src: "data:image/png;base64,AAAA", caption: "图" }, 0);
+if (JSON.stringify(tc.sanitizeTaskBlock(imageOnce, 0)) !== JSON.stringify(imageOnce)) doubleSanitize.push("image");
+check("every control kind survives a sanitize round-trip", doubleSanitize.length === 0 || doubleSanitize.join(","));
+
+check(
+  "a control written with the kind as its key is still built",
+  (() => {
+    const spec = tc.parseCanvasSpec('[canvas] { "ops": [ { "op": "add", "stats": [ { "label": "上证指数", "value": "3,215.42" } ] }, { "op": "add", "note": "说明文字" }, { "op": "add", "trend": { "values": [1, 2, 3] } } ] } [/canvas]');
+    return spec !== null &&
+      spec.dropped.length === 0 &&
+      spec.ops.map((op) => op.block.kind).join(",") === "stats,note,trend" &&
+      spec.ops[0].block.items[0].value === "3,215.42" &&
+      spec.ops[1].block.text === "说明文字" &&
+      spec.ops[2].block.items.length === 3;
+  })() &&
+    // `{ "heading": "标题", "text": "更长的正文" }` keeps the body, not the key's value
+    tc.sanitizeTaskBlock({ heading: "股市趋势", text: "主要指数与板块表现（示意数据）" }, 0).kind === "heading" &&
+    tc.sanitizeTaskBlock({ heading: "股市趋势", text: "主要指数与板块表现（示意数据）" }, 0).text === "主要指数与板块表现（示意数据）" &&
+    // a single item written without the `items` wrapper
+    tc.sanitizeTaskBlock({ stats: { label: "上证", value: "3,215" } }, 0).items.length === 1 &&
+    tc.sanitizeTaskBlock({ links: { label: "行情", url: "https://quote.eastmoney.com/" } }, 0).items[0].label === "行情"
+);
+
+check(
+  "a kind-less control is recognised from its fields",
+  tc.sanitizeTaskBlock({ until: Date.now() + 3600000, label: "截止" }, 0).kind === "countdown" &&
+    tc.sanitizeTaskBlock({ src: "data:image/png;base64,AAAA" }, 0).kind === "image" &&
+    tc.sanitizeTaskBlock({ url: "https://example.com/app", title: "应用" }, 0).kind === "embed" &&
+    tc.sanitizeTaskBlock({ text: "纯文本" }, 0).kind === "text" &&
+    tc.sanitizeTaskBlock({ values: [1, 2, 3] }, 0).kind === "trend" &&
+    tc.sanitizeTaskBlock({ columns: ["列 A"], rows: [["a1"]] }, 0).kind === "table" &&
+    tc.sanitizeTaskBlock({ rows: [["键", "值"]] }, 0).kind === "kv" &&
+    tc.sanitizeTaskBlock({ label: "上证指数", value: "3,215.42" }, 0).kind === "stats" &&
+    tc.sanitizeTaskBlock({ label: "上证指数", value: "3,215.42" }, 0).items[0].label === "上证指数"
+);
+
+check(
+  "a Chinese kind name is understood",
+  tc.sanitizeTaskBlock({ kind: "表格", columns: ["列 A"], rows: [["a1"]] }, 0).kind === "table" &&
+    tc.sanitizeTaskBlock({ kind: "计数器", key: "c1", label: "计数" }, 0).kind === "counter" &&
+    tc.sanitizeTaskBlock({ kind: "折线图", values: [1, 2] }, 0).kind === "trend" &&
+    tc.sanitizeTaskBlock({ kind: "待办", key: "t1", items: [{ id: "a", label: "第一项" }] }, 0).kind === "checklist" &&
+    tc.taskBlockKindOf("  Stats ") === "stats" &&
+    tc.taskBlockKindOf("不是控件") === ""
+);
+
+check(
+  "an unsupported control is reported instead of silently vanishing",
+  (() => {
+    const spec = tc.parseCanvasSpec('[canvas] { "ops": [ { "op": "add", "kind": "看板", "lanes": [] }, { "op": "add", "kind": "text", "text": "能建出来的控件" }, { "op": "frobnicate", "id": "x" } ] } [/canvas]');
+    if (spec === null || spec.ops.length !== 1 || spec.dropped.length !== 2) return false;
+    const canvas = tc.canvasCreate("跳过报告画布");
+    const applied = tc.applyCanvasSpec(canvas.id, spec);
+    return applied.changed === 1 &&
+      applied.dropped.join("|") === "add:看板|op:frobnicate" &&
+      applied.message.includes("跳过 2") &&
+      applied.message.includes("看板") &&
+      Object.values(tc.canvasSnapshot().canvases[canvas.id].cards).some((item) => (item.blocks ?? []).some((block) => block.text === "能建出来的控件"));
+  })()
+);
+
+check(
+  "an unsupported control keeps the name it was authored with",
+  (() => {
+    const once = tc.sanitizeTaskBlock({ kind: "看板", lanes: [], title: "看板视图" }, 0);
+    const twice = tc.sanitizeTaskBlock(once, 0);
+    return once.kind === "unknown" &&
+      once.requested === "看板" &&
+      twice.requested === "看板" &&
+      twice.raw.title === "看板视图" &&
+      // a stored placeholder whose snapshot held the real fields is upgraded
+      tc.sanitizeTaskBlocks([{ kind: "unknown", requested: "unknown", raw: { heading: "股市趋势", text: "正文" } }])[0].kind === "heading" &&
+      // …and a flat list is kept in the snapshot, so a list-shaped placeholder stays recoverable
+      tc.sanitizeTaskBlock({ kind: "未知控件", lanes: ["甲", "乙"] }, 0).raw.lanes.join("") === "甲乙" &&
+      tc.sanitizeTaskBlocks([{ kind: "unknown", requested: "未知控件", raw: { stats: [{ label: "上证", value: "3215" }] } }])[0].kind === "stats";
+  })()
+);
+
+// The exact reply a conversation wrote on this canvas (transcript of 2026-09-18, session
+// 8f3e6579): eight blocks that named their kind as the key, plus two `add` ops. All ten
+// controls must come out real — this is the "画布里新建控件失败" case.
+const recordedReply = '[canvas] { "ops": [ { "op": "addCard", "title": "股市趋势", "x": 104, "y": 440, "blocks": [ { "heading": "股市趋势", "text": "主要指数与板块表现（示意数据，请以行情源为准）" }, { "stats": [ { "label": "上证指数", "value": "3,215.42  +0.62%" }, { "label": "深证成指", "value": "10,120.55  -0.31%" } ] }, { "trend": { "label": "上证指数 · 近 10 个交易日", "unit": "点", "values": [3178.4, 3192.1, 3169.8] } }, { "bars": { "label": "板块涨跌幅（%）", "items": [ { "label": "半导体", "value": 2.8 }, { "label": "银行", "value": 0.4 } ] } }, { "kv": { "rows": [ ["上证指数", "3,215.42"], ["涨跌幅", "+0.62%"] ] } }, { "chips": { "items": ["上证指数", "深证成指"] } }, { "links": { "items": [ { "label": "东方财富行情", "url": "https://quote.eastmoney.com/" } ] } }, { "note": { "text": "画布中的数值为示意样本。" } } ] }, { "op": "add", "kind": "trend", "x": 549, "y": 400, "label": "深证成指 · 近 10 个交易日", "unit": "点", "values": [10180.2, 10210.6, 10155.9] }, { "op": "add", "kind": "kv", "x": 1039, "y": 300, "rows": [ ["上证指数", "3,215.42"], ["深证成指", "10,120.55"] ] } ] } [/canvas]';
+check(
+  "the recorded reply that failed on the canvas now builds every control",
+  (() => {
+    const spec = tc.parseCanvasSpec(recordedReply);
+    if (spec === null || spec.ops.length !== 3 || spec.dropped.length !== 0) return false;
+    const canvas = tc.canvasCreate("录屏回归画布");
+    const applied = tc.applyCanvasSpec(canvas.id, spec);
+    const cards = Object.values(tc.canvasSnapshot().canvases[canvas.id].cards);
+    const cardKinds = cards.filter((item) => item.title === "股市趋势").map((item) => (item.blocks ?? []).map((block) => block.kind).join(","))[0] ?? "";
+    const bareKinds = cards.filter((item) => item.title !== "股市趋势").map((item) => (item.blocks ?? [])[0]?.kind ?? "").sort().join(",");
+    return applied.changed === 3 &&
+      applied.skipped === 0 &&
+      cards.length === 3 &&
+      cardKinds === "heading,stats,trend,bars,kv,chips,links,note" &&
+      // the trend inside the card: `items` must survive the second sanitize
+      cards.some((item) => (item.blocks ?? []).some((block) => block.kind === "trend" && block.items.length === 3)) &&
+      bareKinds === "kv,trend" &&
+      cards.every((item) => (item.blocks ?? []).every((block) => block.kind !== "unknown"));
+  })()
+);
+
 const canvas = tc.canvasCreate("测试画布");
 const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });check(
   "canvas publish adds a copy into the active canvas",
