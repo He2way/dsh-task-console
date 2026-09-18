@@ -58,7 +58,39 @@ document.getElementById("b").addEventListener("click", () => { clicks += 1; rend
 render();
 <\/script></body></html>`;
 
+// A stand-in for a real DSH client plugin. It publishes the embed global the convention
+// prescribes (`__DSH_<ID WITHOUT dsh-plugin->__`) and `mountEmbedded(host, api)`, and stamps
+// every load and mount so a *rebuild* (re-materialized bundle → remount) is unmistakable.
+const demoPluginJs = `(function () {
+  var built = 0;
+  globalThis.__DSH_DEMO_LOADS__ = (globalThis.__DSH_DEMO_LOADS__ || 0) + 1;
+  var load = globalThis.__DSH_DEMO_LOADS__;
+  globalThis.__DSH_DEMO__ = {
+    mountEmbedded: function (host, api) {
+      built += 1;
+      var stamp = "load-" + load + "-build-" + built;
+      var text = "PLUGIN OK " + stamp + " · id=" + (api && api.status ? api.status.id : "?");
+      if (globalThis.React !== void 0 && api && typeof api.render === "function") {
+        api.render(React.createElement("div", { className: "demoPluginBody", "data-build": stamp }, text));
+      } else {
+        var node = document.createElement("div");
+        node.className = "demoPluginBody";
+        node.setAttribute("data-build", stamp);
+        node.textContent = text;
+        host.appendChild(node);
+      }
+      if (api && typeof api.onStatus === "function") api.onStatus({ message: "已挂载 " + stamp });
+    }
+  };
+})();`;
+
 const server = createServer((request, response) => {
+  const path = String(request.url === void 0 ? "/" : request.url).split("?")[0];
+  if (path === "/demo-plugin.js") {
+    response.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
+    response.end(demoPluginJs);
+    return;
+  }
   response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
   response.end(appHtml);
 });
@@ -103,7 +135,7 @@ const jsx = function (type, props) {
 const requireShim = (spec) => {
   if (spec === "react") return React;
   if (spec === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: React.Fragment };
-  if (spec === "react-dom") return { createPortal: ReactDOM.createPortal };
+  if (spec === "react-dom") return { createPortal: ReactDOM.createPortal, createRoot: ReactDOM.createRoot };
   throw new Error("unexpected require " + spec);
 };
 <\/script>
@@ -239,6 +271,10 @@ try {
   };
   const useSessions = (selector) => selector(STATE);
   const url = "http://127.0.0.1:${PORT}/";
+  // A boot manifest with one hosting-capable plugin: the canvas' 🧩 picker and the
+  // addPlugin op both resolve their client bundle through it.
+  const demoPluginId = "dsh-plugin-demo";
+  globalThis.__DSH_BOOT__ = { entries: [{ id: demoPluginId, url: "http://127.0.0.1:${PORT}/demo-plugin.js" }] };
   // Create the card in the store before mounting the panel: the panel reads the store in
   // its state initializer, so no extra render tick is needed here. Three controls so the
   // explosion (one canvas item per control) and the drag-reordering can be observed.
@@ -429,6 +465,74 @@ try {
     " bare=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-bare").length +
     " apps=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-app").length);
 
+  // ---- host another plugin's UI on the canvas: 🧩 picker, then [canvas] ops ----
+  // The plugin is not a card kind: its client bundle is materialized from the boot manifest,
+  // its embed entry mounts into each item (one load, many mounts), and the rebuild op
+  // materializes the bundle again — the load/build stamps below prove both.
+  const waitFor = (check, budget) => new Promise((resolve) => {
+    const started = Date.now();
+    const tick = () => {
+      let ok = false;
+      try { ok = check() === true; } catch { ok = false; }
+      if (ok === true || Date.now() - started > budget) resolve(ok === true);
+      else setTimeout(tick, 50);
+    };
+    tick();
+  });
+  const pluginState = () => { ReactDOM.flushSync(() => {}); return tc.taskPluginState(demoPluginId).state; };
+  const pluginBodies = () => [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-pluginHost .dsh-tc-pluginNode")];
+  const stampOf = (node) => {
+    const found = /load-\\d+-build-\\d+/.exec(node === null || node === void 0 ? "" : String(node.textContent));
+    return found === null ? "none" : found[0];
+  };
+  const pluginPhase = Promise.resolve().then(() => {
+    const picker = [...document.querySelectorAll(".dsh-tc-canvasBar .dsh-tc-btn")].find((node) => (node.textContent || "").indexOf("🧩") === 0) ?? null;
+    if (picker !== null) picker.click();
+    ReactDOM.flushSync(() => {});
+    const panel = [...document.querySelectorAll(".dsh-tc-addPanel")].find((node) => (node.textContent || "").indexOf("点一个插件") !== -1) ?? null;
+    const chips = panel === null ? [] : [...panel.querySelectorAll(".dsh-tc-addChip")];
+    const chip = chips.find((node) => (node.getAttribute("title") || "").indexOf(demoPluginId) === 0) ?? null;
+    if (chip !== null) chip.click();
+    ReactDOM.flushSync(() => {});
+    return waitFor(() => pluginState() === "mounted", 8000).then((mounted) => {
+      const first = pluginBodies()[0] ?? null;
+      const firstStamp = stampOf(first);
+      const found = tc.findPluginEntry(demoPluginId, void 0);
+      log("PLUGIN picker=" + (picker !== null) + " panel=" + (panel !== null) + " chips=" + chips.length +
+        " chip=" + (chip !== null) +
+        " state=" + pluginState() +
+        " mounted=" + mounted +
+        " entry=" + JSON.stringify(found === null ? "none" : found.name) +
+        " stamp=" + firstStamp +
+        " text=" + JSON.stringify(String(first === null ? "" : first.textContent).slice(0, 80)) +
+        " status=" + JSON.stringify(tc.taskPluginState(demoPluginId).message));
+      // The same feature through the protocol a conversation writes: one op adds a second
+      // plugin item, one op rebuilds the item the picker created (fresh revision → remount).
+      const hosted = Object.values(tc.canvasSnapshot().canvases[instanceKey].cards).find((item) => item.plugin !== void 0);
+      const spec = tc.applyCanvasSpec(instanceKey, {
+        ops: [
+          { op: "addPlugin", id: demoPluginId, title: "协议加的插件", height: 300 },
+          { op: "rebuild", id: hosted === void 0 ? "cc-missing" : hosted.id }
+        ]
+      });
+      ReactDOM.flushSync(() => {});
+      return waitFor(() => pluginBodies().length >= 2 &&
+        stampOf(pluginBodies()[0]) !== "none" &&
+        stampOf(pluginBodies()[0]) !== firstStamp, 8000).then(() => {
+        const bodies = pluginBodies();
+        const hostedItems = Object.values(tc.canvasSnapshot().canvases[instanceKey].cards).filter((item) => item.plugin !== void 0);
+        log("PLUGINSPEC ok=" + spec.ok + " changed=" + spec.changed +
+          " summary=" + JSON.stringify(spec.summary) +
+          " hosts=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-pluginHost").length +
+          " stamps=" + bodies.map((node) => stampOf(node)).join("/") +
+          " loads=" + globalThis.__DSH_DEMO_LOADS__ +
+          " rebuilt=" + (stampOf(bodies[0]) !== firstStamp) +
+          " badges=" + [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-pluginBadge")].map((node) => node.textContent).join("/") +
+          " titles=" + hostedItems.map((item) => item.title).join("/"));
+      });
+    });
+  });
+
   // ---- the page bridge: the agent operates the embedded app for real ----
   // The board card gains a *controlled* embed: that frame loads through the bridge, the
   // injected agent registers, and an action list runs inside the actual page.
@@ -437,7 +541,8 @@ try {
   const controlledBlocks = [...(cardNow.blocks ?? []), { kind: "embed", url, title: "受控应用", height: 240, fill: false, control: true }];
   tc.applyTaskCardSpec({ op: "upsert", id: applied.id, title: "全屏应用卡", blocks: controlledBlocks });
   const appTarget = tc.taskBridgeTarget(url);
-  void Promise.resolve()
+  void pluginPhase
+    .catch((error) => log("PLUGINCHAIN " + String(error !== null && error.message ? error.message : error)))
     .then(() => new Promise((resolve) => setTimeout(resolve, 2200))) // iframe → proxy → injected agent → ws
     .then(async () => {
       ReactDOM.flushSync(() => {});
@@ -619,6 +724,23 @@ const shellHeight = full === null ? -1 : Number(full[2]);
 const frameHeight = full === null ? -1 : Number(full[4]);
 const viewportHeight = full === null ? -1 : Number(full[7]);
 const bareMove = /BAREDRAG before=\{"left":"(-?\d+)px","top":"(-?\d+)px"\} after=\{"left":"(-?\d+)px","top":"(-?\d+)px"\}/.exec(boardText);
+// hosting another plugin: the picker path, then the protocol path (add + rebuild)
+const pluginLine = /PLUGIN picker=true panel=true chips=(\d+) chip=true state=mounted mounted=true entry="__DSH_DEMO__" stamp=(load-\d+-build-\d+)/.exec(boardText);
+const pluginSpecLine = /PLUGINSPEC ok=true changed=2 summary="新增插件 1 · 重建插件 1" hosts=2 stamps=(\S+) loads=(\d+) rebuilt=true badges=([^ ]*) titles=(\S+)/.exec(boardText);
+const pluginStamps = pluginSpecLine === null ? [] : pluginSpecLine[1].split("/");
+const pluginOk = pluginLine !== null &&
+  Number(pluginLine[1]) >= 1 &&
+  // the mounted UI really came from the plugin's own bundle (its React render ran)
+  boardText.includes('text="PLUGIN OK ' + pluginLine[2] + ' · id=dsh-plugin-demo"') &&
+  boardText.includes('status="已挂载 ' + pluginLine[2] + '"');
+const pluginSpecOk = pluginSpecLine !== null &&
+  pluginStamps.length === 2 &&
+  // one bundle load serves the second item; the rebuild is the load that re-materializes it
+  Number(pluginSpecLine[2]) === 2 &&
+  pluginStamps.includes(pluginLine === null ? "" : pluginLine[2]) === false &&
+  pluginStamps.every((stamp) => stamp.startsWith("load-")) &&
+  pluginSpecLine[3] === "已挂载/已挂载" &&
+  pluginSpecLine[4].split("/").includes("协议加的插件");
 const instanceOk = instance !== null &&
   instance[1] === "true" &&
   instance[2] === "副本画布" &&
@@ -651,6 +773,12 @@ const instanceOk = instance !== null &&
   Number(bareMove[3]) === Number(bareMove[1]) + 120 &&
   Number(bareMove[4]) === Number(bareMove[2]) + 60 &&
   boardText.includes("DERIVE items=4 bare=1 apps=1") &&
+  // another plugin's UI is hosted on the canvas, not just cards: the 🧩 picker loads its
+  // client bundle from the boot manifest and mounts its embed entry into the item
+  pluginOk &&
+  // and the same feature works from a [canvas] op list: addPlugin adds a second item,
+  // rebuild re-materializes the bundle (load-2) and remounts it
+  pluginSpecOk &&
   // the agent operated the real embedded page through the bridge
   /BRIDGE state=connected title="本地应用" ok=true count=4 clicks=2 badge=受控 · 已连接/.test(boardText);
 const fullOk = boardText.includes("BOARD cards=") &&
@@ -672,6 +800,7 @@ if (process.env.DSH_EMBED_DEBUG === "1") {
   console.log("DEBUG add=" + /ADD menu=true chips=18 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText));
   console.log("DEBUG chat=" + /CHAT input=true send=true placeholder=用一句话修改这块画布 bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText));
   console.log("DEBUG derive=" + boardText.includes("DERIVE items=4 bare=1 apps=1"));
+  console.log("DEBUG plugin=" + pluginOk + " pluginSpec=" + pluginSpecOk + " " + JSON.stringify(pluginSpecLine));
   console.log("DEBUG escape=" + boardText.includes("ESCAPE overlay=true instance=true"));
 }
 process.exit(ok && instanceOk && fullOk ? 0 : 1);

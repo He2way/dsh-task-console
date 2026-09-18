@@ -647,6 +647,24 @@ check("spec parse rejects plain text", tc.parseTaskCardSpec("ordinary message wi
 check("button validation drops empty value", tc.sanitizeTaskButton({ label: "x", action: "copy", value: "  " }) === null);
 check("button validation keeps fill", tc.sanitizeTaskButton({ label: "", action: "fill", value: "hi" }) !== null && tc.sanitizeTaskButton({ action: "fill", value: "hi" }).action === "fill");
 check("builtin id list", tc.builtinTaskCardIds().length >= 4 && tc.builtinTaskCardIds().includes("session"));
+
+// ---- 工作时序 preset card (host integration with dsh-plugin-tpt-chronicle) ----
+check(
+  "chronicle is a builtin card with a default slot",
+  tc.builtinTaskCardIds().includes("chronicle") &&
+    typeof tc.TASK_CARD_DEFAULTS.chronicle.x === "number" &&
+    tc.TASK_CARD_DEFAULTS.chronicle.h > 0
+);
+check("chronicle card id is the plugin package name", tc.TPT_PLUGIN_ID === "dsh-plugin-tpt-chronicle");
+const chronicleHtml = renderToString(jsx(tc.TaskBackPanel, { useSessions, onClose: () => {}, modules: undefined }));
+check("chronicle card renders on the board", chronicleHtml.includes("工作时序") && chronicleHtml.includes("dsh-tc-tptHost"));
+const noModules = await tc.loadTptBundle(undefined).then(() => null, (error) => error);
+check(
+  "loader asks for the DSH start manifest when rows are unavailable",
+  noModules instanceof Error && noModules.message.includes("dsh-plugin-tpt-chronicle"),
+  noModules instanceof Error ? noModules.message : String(noModules)
+);
+check("chronicle badge starts empty", tc.chronicleStatus.value === null);
 const created = tc.applyTaskCardSpec({ op: "upsert", title: "测试卡", blocks: [{ kind: "text", text: "内容" }] });
 check("apply upsert creates user card", created.ok && created.created === true && created.id.startsWith("usr-"));
 const updated = tc.applyTaskCardSpec({ op: "upsert", title: "测试卡", blocks: [{ kind: "checklist", key: "todo", items: [{ id: "a", label: "A" }] }] });
@@ -864,6 +882,62 @@ check(
     tc.snapshotTaskCards().cards[createdSpec.id].blocks[0].text === "改过的说明"
 );
 check("no-op write-backs are ignored", tc.canvasWriteBackBlock(createdSpec.id, firstBid, [{ kind: "note", text: "改过的说明", bid: firstBid }]) === false);
+
+// ---- the canvas chat may ADD controls, not just reference them ----
+check(
+  "instance canvases name their card, plain canvases name none",
+  tc.instanceCardOf(instanceId) === createdSpec.id && tc.instanceCardOf("cv-plain") === ""
+);
+const adoptCanvas = tc.canvasCreate("收养画布");
+check("adoption ignores a normal canvas", tc.canvasAdoptItems(adoptCanvas.id).length === 0);
+const adoptId = tc.canvasAddControl(adoptCanvas.id, "counter", 40, 40);
+check("adoption ignores free items on a normal canvas", tc.canvasAdoptItems(adoptCanvas.id).length === 0 && tc.canvasSnapshot().canvases[adoptCanvas.id].cards[adoptId] !== void 0);
+
+const adoptSource = tc.applyTaskCardSpec({ op: "upsert", title: "收养目标", blocks: [{ kind: "heading", text: "已有控件" }] });
+const adoptInstance = tc.canvasOpenInstance({ ...tc.snapshotTaskCards().cards[adoptSource.id], id: adoptSource.id });
+const blocksBefore = tc.snapshotTaskCards().cards[adoptSource.id].blocks.length;
+// The chat's `add` op lands on the plane; adoption is what makes it stick to the card.
+const chatReply = '[canvas] { "ops": [ { "op": "add", "kind": "countdown", "until": ' + (Date.now() + 86400000) + ', "label": "到明天 18 点" } ] } [/canvas]';
+const addedByChat = tc.applyCanvasSpec(adoptInstance, tc.parseCanvasSpec(chatReply));
+const adopted = tc.canvasAdoptItems(adoptInstance);
+const adoptedItem = adopted.length > 0 ? tc.canvasSnapshot().canvases[adoptInstance].cards[adopted[0]] : void 0;
+const cardAfterAdopt = tc.snapshotTaskCards().cards[adoptSource.id];
+check(
+  "a control added by the canvas chat is created through the canvas protocol",
+  addedByChat.ok === true && addedByChat.changed === 1
+);
+check(
+  "adoption binds the new item to the card's new control",
+  adopted.length === 1 &&
+    adoptedItem !== void 0 &&
+    adoptedItem.from !== void 0 &&
+    adoptedItem.from.card === adoptSource.id &&
+    typeof adoptedItem.from.bid === "string" &&
+    adoptedItem.from.bid.length > 0 &&
+    cardAfterAdopt.blocks.some((block) => block.kind === "countdown" && block.bid === adoptedItem.from.bid),
+  JSON.stringify({ adopted: adopted.length, from: adoptedItem?.from, addedByChat })
+);
+check(
+  "adoption grows the card by exactly the new control",
+  cardAfterAdopt.blocks.length === blocksBefore + 1 &&
+    cardAfterAdopt.blocks.filter((block) => block.kind === "countdown").length === 1
+);
+check("adoption is idempotent", tc.canvasAdoptItems(adoptInstance).length === 0);
+// The adopted control already sits first on the plane, so the card's order already agrees.
+// Dragging it below the older control must move it down on the card too.
+const adoptedId = adopted[0];
+tc.canvasUpsertCard(adoptInstance, { ...tc.canvasSnapshot().canvases[adoptInstance].cards[adoptedId], y: 900 }, true);
+check(
+  "adopted items take part in the canvas-order mapping",
+  tc.canvasSyncBlockOrder(adoptInstance, adoptSource.id) === true &&
+    tc.snapshotTaskCards().cards[adoptSource.id].blocks[0].kind === "heading" &&
+    tc.snapshotTaskCards().cards[adoptSource.id].blocks[1].kind === "countdown"
+);
+// Multi-control cards stay plane-only: they are not "a control" to graft onto the card.
+const multiId = tc.canvasAddControl(adoptInstance, "text", 700, 700);
+tc.canvasUpsertCard(adoptInstance, { ...tc.canvasSnapshot().canvases[adoptInstance].cards[multiId], blocks: [{ kind: "text", text: "两行" }, { kind: "note", text: "第二行" }] }, true);
+check("adoption skips multi-control items", tc.canvasAdoptItems(adoptInstance).length === 0);
+
 check(
   "deleting a bound control removes it from the card",
   tc.canvasRemoveBoundBlock({ from: { card: createdSpec.id, bid: firstBid } }) === true &&
@@ -1276,6 +1350,132 @@ check(
   (await tc.runPageBlockFromReply('[page] { "actions": [ { "action": "read" } ] } [/page]', controlledBlocks)).summary.includes("bridge-unreachable")
 );
 tc.saveTaskBridgeSettings(tc.freshTaskBridgeSettings());
+
+// ---- plugin items: any plugin's UI on the canvas, addable and rebuildable ----
+check(
+  "plugin references sanitize like every other id",
+  tc.sanitizePluginRef({ id: "dsh-plugin-tpt-chronicle" }).id === "dsh-plugin-tpt-chronicle" &&
+    tc.sanitizePluginRef({ id: "@scope/pkg", title: "包名", height: 400 }).height === 400 &&
+    tc.sanitizePluginRef({ id: "bad id!" }) === null &&
+    tc.sanitizePluginRef({ id: "" }) === null &&
+    tc.sanitizePluginRef(null) === null
+);
+check(
+  "the embed global follows the DSH convention",
+  // the convention drops the `dsh-plugin-` prefix, exactly like dsh-plugin-tpt-chronicle's
+  // globalThis.__DSH_TPT_CHRONICLE__ that the chronicle card already mounts
+  tc.pluginGlobalName("dsh-plugin-tpt-chronicle") === "__DSH_TPT_CHRONICLE__" &&
+    tc.pluginGlobalName("@scope/pkg") === "__DSH_PKG__" &&
+    tc.pluginBareName("@scope/dsh-plugin-thing") === "thing"
+);
+globalThis.__DSH_DEMO_PLUGIN__ = { mountEmbedded: () => {} };
+globalThis.__CUSTOM_ENTRY__ = () => {};
+globalThis.__DSH_DSH_PLUGIN_LEGACY__ = { mountEmbedded: () => {} };
+globalThis.__DSH_TPT_CHRONICLE__ = { mountEmbedded: () => {} };
+check(
+  "embed entries are discovered by convention or by name",
+  tc.findPluginEntry("demo-plugin", void 0) !== null &&
+    tc.findPluginEntry("demo-plugin", void 0).name === "__DSH_DEMO_PLUGIN__" &&
+    tc.findPluginEntry("whatever", "__CUSTOM_ENTRY__") !== null &&
+    // the real plugin id resolves to the global its bundle actually publishes
+    tc.findPluginEntry("dsh-plugin-tpt-chronicle", void 0) !== null &&
+    tc.findPluginEntry("dsh-plugin-tpt-chronicle", void 0).name === "__DSH_TPT_CHRONICLE__" &&
+    // a plugin that kept its prefix in the global still hosts
+    tc.findPluginEntry("dsh-plugin-legacy", void 0) !== null &&
+    tc.findPluginEntry("nope-plugin", void 0) === null
+);
+delete globalThis.__DSH_DEMO_PLUGIN__;
+delete globalThis.__CUSTOM_ENTRY__;
+delete globalThis.__DSH_DSH_PLUGIN_LEGACY__;
+delete globalThis.__DSH_TPT_CHRONICLE__;
+check(
+  "the plugin picker lists client bundles and degrades without a manifest",
+  Array.isArray(tc.listPluginCandidates()) && tc.listPluginCandidates().every((row) => typeof row.id === "string" && typeof row.url === "string")
+);
+globalThis.__DSH_BOOT__ = { entries: [{ id: "dsh-plugin-demo", url: "https://example.com/demo.js" }] };
+const pluginCanvas = tc.canvasCreate("插件画布");
+const pluginItemId = tc.canvasAddPlugin(pluginCanvas.id, { id: "dsh-plugin-demo", title: "演示插件", height: 420 });
+const pluginItem = tc.canvasSnapshot().canvases[pluginCanvas.id].cards[pluginItemId];
+check(
+  "a plugin item lands on the canvas with its own size and revision",
+  pluginItemId !== null &&
+    pluginItem.plugin.id === "dsh-plugin-demo" &&
+    pluginItem.title === "演示插件" &&
+    pluginItem.h === 420 &&
+    // a fresh item carries no revision: the bundle is loaded once and reused per item
+    pluginItem.plugin.rev === void 0 &&
+    pluginItem.blocks === void 0
+);
+const barePluginId = tc.canvasAddPlugin(pluginCanvas.id, { id: "dsh-plugin-demo" }, { bare: true, x: 10, y: 20 });
+check("a plugin item can be bare (no card chrome)", tc.canvasSnapshot().canvases[pluginCanvas.id].cards[barePluginId].bare === true);
+const pluginRebuilt = tc.rebuildHostedPlugin(pluginCanvas.id, tc.canvasSnapshot().canvases[pluginCanvas.id].cards[pluginItemId]);
+const pluginRevOnce = tc.canvasSnapshot().canvases[pluginCanvas.id].cards[pluginItemId].plugin.rev;
+const pluginRebuiltAgain = tc.rebuildHostedPlugin(pluginCanvas.id, tc.canvasSnapshot().canvases[pluginCanvas.id].cards[pluginItemId]);
+const pluginRevTwice = tc.canvasSnapshot().canvases[pluginCanvas.id].cards[pluginItemId].plugin.rev;
+check(
+  "rebuilding a plugin item always moves its revision forward",
+  pluginRebuilt === true &&
+    pluginRebuiltAgain === true &&
+    typeof pluginRevOnce === "number" &&
+    // two rebuilds inside one millisecond must still differ, or the mounted UI stays put
+    pluginRevTwice > pluginRevOnce
+);
+const pluginSpec = tc.parseCanvasSpec('[canvas] { "ops": [ { "op": "addPlugin", "id": "dsh-plugin-demo", "title": "演示", "height": 380 }, { "op": "addPlugin", "pluginId": "dsh-plugin-two", "bare": true }, { "op": "addPlugin", "id": "bad id" } ] } [/canvas]');
+check(
+  "canvas ops can add plugins and drop unusable references",
+  pluginSpec !== null &&
+    pluginSpec.ops.length === 2 &&
+    pluginSpec.ops[0].op === "addPlugin" &&
+    pluginSpec.ops[0].plugin.id === "dsh-plugin-demo" &&
+    pluginSpec.ops[0].plugin.height === 380 &&
+    pluginSpec.ops[1].plugin.id === "dsh-plugin-two" &&
+    pluginSpec.ops[1].bare === true
+);
+const pluginApplied = tc.applyCanvasSpec(pluginCanvas.id, {
+  ops: [
+    { op: "addPlugin", plugin: { id: "dsh-plugin-three" }, x: 300, y: 90 },
+    { op: "rebuild", id: pluginItemId },
+    { op: "rebuild", id: "cc-missing" },
+  ],
+});
+check(
+  "plugin ops apply and report what they did",
+  pluginApplied.ok === true &&
+    pluginApplied.changed === 2 &&
+    pluginApplied.skipped === 1 &&
+    pluginApplied.message.includes("新增插件 1") &&
+    pluginApplied.message.includes("重建插件 1") &&
+    Object.values(tc.canvasSnapshot().canvases[pluginCanvas.id].cards).some((item) => item.plugin !== void 0 && item.plugin.id === "dsh-plugin-three")
+);
+const pluginRawApplied = tc.applyCanvasSpec(pluginCanvas.id, {
+  ops: [
+    // a programmatic caller passes the raw shape (no parser in between)
+    { op: "addPlugin", id: "dsh-plugin-demo", title: "裸写法", height: 260, bare: true },
+    { op: "addPlugin", plugin: "dsh-plugin-demo", y: 40 },
+  ],
+});
+check(
+  "addPlugin accepts both the parsed and the raw op shape",
+  pluginRawApplied.ok === true &&
+    pluginRawApplied.changed === 2 &&
+    Object.values(tc.canvasSnapshot().canvases[pluginCanvas.id].cards).some((item) => item.plugin !== void 0 && item.title === "裸写法" && item.h === 260 && item.bare === true)
+);
+const pluginPrompt = tc.composeCanvasChatPrompt({ canvasId: pluginCanvas.id, canvas: tc.canvasSnapshot().canvases[pluginCanvas.id] }, "把工作时序插件放到画布上");
+check(
+  "the canvas prompt teaches plugin ops and lists candidates",
+  pluginPrompt.includes('"op": "addPlugin"') &&
+    pluginPrompt.includes('"op": "rebuild"') &&
+    pluginPrompt.includes("可挂载的插件") &&
+    pluginPrompt.includes("dsh-plugin-demo") &&
+    pluginPrompt.includes("mountEmbedded")
+);
+delete globalThis.__DSH_BOOT__;
+const pluginHostHtml = renderToString(jsx(tc.PluginHostView, { plugin: { id: "dsh-plugin-absent" }, dark: false }));
+check(
+  "the plugin host renders a node (and explains when an entry is missing)",
+  pluginHostHtml.includes("dsh-tc-pluginHost") && (pluginHostHtml.includes("dsh-tc-pluginFailed") || pluginHostHtml.includes("dsh-tc-pluginNode"))
+);
+check("the canvas bar offers the plugin picker", renderToString(jsx(tc.TaskCanvasView, { onClose: () => {} })).includes("插件"));
 
 const canvas = tc.canvasCreate("测试画布");
 const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });check(
