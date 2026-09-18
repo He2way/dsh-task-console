@@ -86,12 +86,19 @@ const demoPluginJs = `(function () {
 
 const server = createServer((request, response) => {
   const path = String(request.url === void 0 ? "/" : request.url).split("?")[0];
+  // The page is file://, so it needs CORS to read the pixel it turns into a local image control.
+  const headers = { "cache-control": "no-store", "access-control-allow-origin": "*" };
+  if (path === "/pixel.png") {
+    response.writeHead(200, { ...headers, "content-type": "image/png" });
+    response.end(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAJUlEQVR42u3NMQEAAAgDoC251a3gLzSgmXBPFEVRFEVRFEVRFEXxW3wXTQGx6hK8AAAAAElFTkSuQmCC", "base64"));
+    return;
+  }
   if (path === "/demo-plugin.js") {
-    response.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
+    response.writeHead(200, { ...headers, "content-type": "text/javascript; charset=utf-8" });
     response.end(demoPluginJs);
     return;
   }
-  response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  response.writeHead(200, { ...headers, "content-type": "text/html; charset=utf-8" });
   response.end(appHtml);
 });
 await new Promise((resolve) => server.listen(PORT, "127.0.0.1", resolve));
@@ -275,6 +282,10 @@ try {
   // addPlugin op both resolve their client bundle through it.
   const demoPluginId = "dsh-plugin-demo";
   globalThis.__DSH_BOOT__ = { entries: [{ id: demoPluginId, url: "http://127.0.0.1:${PORT}/demo-plugin.js" }] };
+  // Anything that throws inside an event handler would otherwise be invisible to this harness.
+  const pageErrors = [];
+  window.addEventListener("error", (event) => pageErrors.push(String(event.message)));
+  window.addEventListener("unhandledrejection", (event) => pageErrors.push("rejection: " + String(event.reason)));
   // Create the card in the store before mounting the panel: the panel reads the store in
   // its state initializer, so no extra render tick is needed here. Three controls so the
   // explosion (one canvas item per control) and the drag-reordering can be observed.
@@ -596,6 +607,49 @@ try {
               tc.stopTaskCardWatcher();
               row.remove();
               planRow.remove();
+              // ---- images: a reachable source renders, an unreachable one explains itself ----
+              // A remote src is fetched by the browser, so it can fail for reasons this plugin
+              // never sees. The item must say which address failed and offer a way out, and the
+              // local-file way out must really replace the control.
+              const imageCanvasId = tc.canvasSnapshot().activeId;
+              tc.canvasAddControl(imageCanvasId, "image", 20, 700, { kind: "image", src: "http://127.0.0.1:${PORT}/pixel.png", caption: "本地可达图片" });
+              tc.canvasAddControl(imageCanvasId, "image", 420, 700, { kind: "image", src: "http://127.0.0.1:${PORT}/missing-image.png", caption: "取不到的图片" });
+              ReactDOM.flushSync(() => {});
+              const loadedImages = () => [...document.querySelectorAll(".dsh-tc-img")].filter((node) => node.naturalWidth > 0).length;
+              return waitFor(() => document.querySelectorAll(".dsh-tc-imgFailed").length > 0 && loadedImages() > 0, 12000).then((settled) => {
+                const failedBox = document.querySelector(".dsh-tc-imgFailed");
+                const picker = failedBox === null ? null : failedBox.querySelector(".dsh-tc-imgFailFile");
+                log("IMAGE settled=" + settled +
+                  " imgs=" + document.querySelectorAll(".dsh-tc-img").length +
+                  " loaded=" + loadedImages() +
+                  " failed=" + document.querySelectorAll(".dsh-tc-imgFailed").length +
+                  " picker=" + (picker !== null) +
+                  " hint=" + JSON.stringify(String(failedBox === null ? "" : failedBox.textContent).slice(0, 90)));
+                if (picker === null) return false;
+                return fetch("http://127.0.0.1:${PORT}/pixel.png")
+                  .then((answer) => answer.blob())
+                  .then((blob) => {
+                    // The real path: a local file picked in the failure box is read, downscaled
+                    // and written back as a data URL, so the picture renders without any network.
+                    const transfer = new DataTransfer();
+                    transfer.items.add(new File([blob], "pixel.png", { type: "image/png" }));
+                    picker.files = transfer.files;
+                    picker.dispatchEvent(new Event("change", { bubbles: true }));
+                    ReactDOM.flushSync(() => {});
+                    return waitFor(() => document.querySelectorAll(".dsh-tc-imgFailed").length === 0 && loadedImages() >= 2, 12000);
+                  })
+                  .then(() => waitFor(() => document.querySelectorAll(".dsh-tc-imgFailed").length === 0 && loadedImages() >= 2, 12000))
+                  .then((replaced) => {
+                    const stored = Object.values(tc.canvasSnapshot().canvases[imageCanvasId].cards)
+                      .filter((item) => (item.blocks ?? [])[0]?.kind === "image")
+                      .map((item) => (item.blocks[0].src.startsWith("data:image/") ? "local" : "remote"));
+                    log("IMAGELOCAL replaced=" + replaced +
+                      " loaded=" + loadedImages() +
+                      " failed=" + document.querySelectorAll(".dsh-tc-imgFailed").length +
+                      " stored=" + stored.sort().join(","));
+                    return true;
+                  });
+              });
             });
       });
     });
@@ -857,6 +911,10 @@ const instanceOk = instance !== null &&
   // the five-control card plus the bare trend item, and no "unsupported" boxes at all
   /RECORDED built=true cards=\d+\(was \d+\) bare=1 kinds=trend unsupported=0 trendMarks=[1-9]/.test(boardText) &&
   /RECORDED .*stored="[^"]*heading\+stats\+trend\+kv\+note/.test(boardText) &&
+  // images: the reachable one is really rendered, the unreachable one says which host failed…
+  /IMAGE settled=true imgs=1 loaded=1 failed=1 picker=true hint="图片加载失败取不到 127\.0\.0\.1/.test(boardText) &&
+  // …and picking a local file replaces the control with a data URL that renders without network
+  /IMAGELOCAL replaced=true loaded=2 failed=0 stored=local,remote/.test(boardText) &&
   // the agent operated the real embedded page through the bridge
   /BRIDGE state=connected title="本地应用" ok=true count=4 clicks=2 badge=受控 · 已连接/.test(boardText);
 const fullOk = boardText.includes("BOARD cards=") &&

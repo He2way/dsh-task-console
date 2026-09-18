@@ -1517,6 +1517,49 @@ check(
 );
 offNotice();
 
+// ---- images on the canvas (regression: a remote picture that cannot load) ----
+const imageCanvas = tc.canvasCreate("图片画布回归");
+const remoteImageId = tc.canvasAddControl(imageCanvas.id, "image", 40, 40, { kind: "image", src: "https://upload.wikimedia.org/wikipedia/commons/thumb/x/280px-y.png", caption: "取不到的图" });
+const localImageId = tc.canvasAddControl(imageCanvas.id, "image", 420, 40, { kind: "image", src: "data:image/png;base64,AAAA", caption: "本地图" });
+check(
+  "an image control lands on the canvas with both source kinds",
+  remoteImageId !== null &&
+    localImageId !== null &&
+    tc.canvasSnapshot().canvases[imageCanvas.id].cards[remoteImageId].blocks[0].kind === "image" &&
+    tc.canvasSnapshot().canvases[imageCanvas.id].cards[localImageId].blocks[0].src.startsWith("data:image/") &&
+    // a page URL, a bare host and a javascript: URL are all rejected at parse time
+    tc.sanitizeTaskBlock({ kind: "image", src: "https://example.com/gallery" }, 0) !== null &&
+    tc.sanitizeTaskBlock({ kind: "image", src: "javascript:alert(1)" }, 0) === null &&
+    tc.sanitizeTaskBlock({ kind: "image", src: "file:///C:/x.png" }, 0) === null
+);
+check(
+  "replacing a broken image keeps the item, its binding and the other blocks",
+  (() => {
+    const canvasId = imageCanvas.id;
+    const item = tc.canvasSnapshot().canvases[canvasId].cards[remoteImageId];
+    const replaced = tc.canvasReplaceBlock(canvasId, item, 0, { ...item.blocks[0], src: "data:image/png;base64,BBBB" });
+    const after = tc.canvasSnapshot().canvases[canvasId].cards[remoteImageId];
+    // a multi-block item is spliced, not collapsed
+    const multiId = tc.canvasAddControl(canvasId, "text", 60, 300, { kind: "text", text: "保留我" });
+    const multi = tc.canvasSnapshot().canvases[canvasId].cards[multiId];
+    const multiReplaced = tc.canvasReplaceBlock(canvasId, { ...multi, blocks: [...multi.blocks, { kind: "note", text: "第二块" }] }, 0, { kind: "text", text: "换掉了" });
+    return replaced !== null &&
+      after.blocks[0].src === "data:image/png;base64,BBBB" &&
+      after.blocks.length === 1 &&
+      multiReplaced !== null &&
+      multiReplaced.blocks.length === 2 &&
+      multiReplaced.blocks[0].text === "换掉了" &&
+      multiReplaced.blocks[1].text === "第二块";
+  })()
+);
+check(
+  "the image view renders a picture, and only the failure state is a warning",
+  (() => {
+    const html = renderToString(jsx(tc.TaskImageView, { block: { kind: "image", src: "data:image/png;base64,AAAA", caption: "图", alt: "图" } }));
+    return html.includes("dsh-tc-img") && html.includes("figcaption") && !html.includes("dsh-tc-imgFailed");
+  })()
+);
+
 // ---- control shapes a conversation really writes (regression: canvas 新建控件 failed) ----
 // Every control kind must survive a second sanitize: the canvas paths re-sanitize what the
 // parser produced (add / adopt / explode / update), so a kind whose own canonical shape is not
