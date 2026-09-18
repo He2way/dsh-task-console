@@ -1477,6 +1477,46 @@ check(
 );
 check("the canvas bar offers the plugin picker", renderToString(jsx(tc.TaskCanvasView, { onClose: () => {} })).includes("插件"));
 
+// ---- the main conversation can drive the same canvas ops ([canvas] in a chat row) ----
+const notices = [];
+const offNotice = tc.subscribeTaskNotice((next) => notices.push(next));
+check(
+  "a canvas block may name the canvas it targets",
+  (() => {
+    const spec = tc.parseCanvasSpec('[canvas] { "canvas": "发布画布", "ops": [ { "op": "addPlugin", "id": "dsh-plugin-demo" } ] } [/canvas]');
+    return spec !== null && spec.canvas === "发布画布" && spec.ops.length === 1;
+  })() &&
+    tc.parseCanvasSpec('[canvas] { "ops": [ { "op": "note", "text": "x" } ] } [/canvas]').canvas === void 0
+);
+check(
+  "a main-conversation canvas block creates its canvas, applies the ops and reports",
+  tc.applyConversationCanvasSpec('[canvas] { "canvas": "发布画布", "ops": [ { "op": "addPlugin", "id": "dsh-plugin-demo", "title": "对话放的插件" } ] } [/canvas]') === true &&
+    (() => {
+      const created = Object.values(tc.canvasSnapshot().canvases).find((item) => item.name === "发布画布");
+      return created !== void 0 &&
+        Object.values(created.cards).some((item) => item.plugin !== void 0 && item.title === "对话放的插件") &&
+        notices.length === 1 &&
+        notices[0].canvasId === created.id &&
+        notices[0].text.includes("发布画布") &&
+        notices[0].text.includes("新增插件 1");
+    })()
+);
+check(
+  "without a canvas name the active canvas receives the ops",
+  (() => {
+    const activeId = tc.canvasSnapshot().activeId;
+    const ok = tc.applyConversationCanvasSpec('[canvas] { "ops": [ { "op": "add", "kind": "note", "text": "主对话加的说明" } ] } [/canvas]') === true;
+    return ok && Object.values(tc.canvasSnapshot().canvases[activeId].cards).some((item) => (item.blocks ?? []).some((block) => block.text === "主对话加的说明"));
+  })()
+);
+check(
+  "a reply without a canvas block changes nothing",
+  tc.applyConversationCanvasSpec("这句回复里没有画布块") === true &&
+    tc.applyConversationCanvasSpec('[canvas] { "ops": [] } [/canvas]') === true &&
+    notices.length === 2
+);
+offNotice();
+
 const canvas = tc.canvasCreate("测试画布");
 const published = tc.canvasPublishCard({ title: "源卡", blocks: [{ kind: "text", text: "hi" }] });check(
   "canvas publish adds a copy into the active canvas",

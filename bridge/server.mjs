@@ -541,7 +541,9 @@ export function startBridge(options) {
       pages.set(target, sockets);
       const page = { socket, url: "", title: "", since: Date.now() };
       sockets.set(socket, page);
-      notifyHosts(target, { type: "page", state: "connected", target, frames: sockets.size });
+      // Always carry what is already known about the target: a notification that leaves the
+      // url/title out would otherwise read as "the page has no title" on the workbench.
+      notifyHosts(target, { type: "page", state: "connected", target, url: firstPage(target)?.url ?? "", title: firstPage(target)?.title ?? "", frames: sockets.size });
       const read = createFrameReader((frame) => {
         if (frame.kind === "close") { socket.end(); return; }
         if (frame.kind !== "text") return;
@@ -575,7 +577,7 @@ export function startBridge(options) {
           pages.delete(target);
           notifyHosts(target, { type: "page", state: "disconnected", target });
         } else {
-          notifyHosts(target, { type: "page", state: "connected", target, frames: sockets.size });
+          notifyHosts(target, { type: "page", state: "connected", target, url: firstPage(target)?.url ?? "", title: firstPage(target)?.title ?? "", frames: sockets.size });
         }
       });
       return;

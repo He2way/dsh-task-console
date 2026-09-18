@@ -147,6 +147,14 @@ firstAgain.close();
 secondPage.close();
 await new Promise((resolve) => setTimeout(resolve, 150));
 check("closing one frame keeps the target alive", (bridge.pages.get(key)?.size ?? 0) === 1);
+// Every notification about a target carries what is known about it: a bare "connected" would
+// read as "this page has no title" on the workbench and blank the app badge's tooltip.
+const pageNotices = hostSeen.filter((message) => message.type === "page" && message.state === "connected");
+check(
+  "page notifications always carry the target's url and title",
+  pageNotices.length >= 3 &&
+    pageNotices.every((message) => message.url === targetUrl && message.title === "目标页")
+);
 
 // The token gates the socket too.
 let wsRejected = false;

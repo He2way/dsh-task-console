@@ -135,7 +135,7 @@ const jsx = function (type, props) {
 const requireShim = (spec) => {
   if (spec === "react") return React;
   if (spec === "react/jsx-runtime") return { jsx, jsxs: jsx, Fragment: React.Fragment };
-  if (spec === "react-dom") return { createPortal: ReactDOM.createPortal, createRoot: ReactDOM.createRoot };
+  if (spec === "react-dom") return { createPortal: ReactDOM.createPortal, createRoot: ReactDOM.createRoot, flushSync: ReactDOM.flushSync };
   throw new Error("unexpected require " + spec);
 };
 <\/script>
@@ -529,9 +529,53 @@ try {
           " rebuilt=" + (stampOf(bodies[0]) !== firstStamp) +
           " badges=" + [...document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-pluginBadge")].map((node) => node.textContent).join("/") +
           " titles=" + hostedItems.map((item) => item.title).join("/"));
+        return null;
       });
     });
   });
+  /**
+   * The **main conversation** route: a [canvas] block sitting in a chat row is picked up by the
+   * plugin's watcher, applied to the canvas it names, and reported on the board as a notice that
+   * opens exactly that canvas. It runs last on purpose: swapping canvases while plugin items are
+   * hosted on the plane is part of what this checks.
+   */
+  const conversationPhase = () => {
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+    tc.startTaskCardWatcher();
+    const row = document.createElement("div");
+    row.setAttribute("data-chat-anchor-key", "conv-canvas-1");
+        row.setAttribute("data-chat-flow-kind", "assistant");
+        row.style.display = "none";
+        row.textContent = '[canvas] { "canvas": "主对话画布", "ops": [ { "op": "addPlugin", "id": "' + demoPluginId + '", "title": "主对话加的插件" } ] } [/canvas]';
+        document.body.appendChild(row);
+        const convCanvasOf = () => Object.values(tc.canvasSnapshot().canvases).find((item) => item.name === "主对话画布") ?? null;
+        return waitFor(() => convCanvasOf() !== null && Object.values(convCanvasOf().cards).some((item) => item.title === "主对话加的插件"), 15000).then((convApplied) => {
+          const notice = document.querySelector(".dsh-tc-notice");
+          const convCanvas = convCanvasOf();
+          const pluginState2 = tc.taskPluginState(demoPluginId);
+          log("CONVERSATION applied=" + convApplied +
+            " canvas=" + (convCanvas === null ? "none" : convCanvas.id === tc.canvasSnapshot().activeId ? "active" : "idle") +
+            " items=" + (convCanvas === null ? -1 : Object.keys(convCanvas.cards).length) +
+            " plugin=" + (convCanvas === null ? "none" : Object.values(convCanvas.cards).some((item) => item.plugin !== void 0)) +
+            " state=" + pluginState2.state +
+            " notice=" + JSON.stringify(notice === null ? "none" : notice.textContent));
+          if (notice !== null) notice.click();
+          // Any DOM teardown that goes wrong while the canvas swaps throws from this flush.
+          let clickError = "none";
+          try { ReactDOM.flushSync(() => {}); } catch (error) { clickError = String(error !== null && error.message ? error.message : error).slice(0, 80); }
+          return new Promise((resolve) => setTimeout(resolve, 150)).then(() => {
+            const nameInput = document.querySelector(".dsh-tc-canvasName");
+            log("CONVERSATIONCLICK view=" + (document.querySelector(".dsh-tc-canvasView") !== null) +
+              " name=" + JSON.stringify(nameInput === null ? "none" : nameInput.value) +
+              " active=" + (convCanvasOf() !== null && tc.canvasSnapshot().activeId === convCanvasOf().id) +
+              " hosts=" + document.querySelectorAll(".dsh-tc-canvasPlane .dsh-tc-pluginHost").length +
+              " error=" + JSON.stringify(clickError) +
+              " noticeGone=" + (document.querySelector(".dsh-tc-notice") === null));
+            tc.stopTaskCardWatcher();
+            row.remove();
+      });
+    });
+  };
 
   // ---- the page bridge: the agent operates the embedded app for real ----
   // The board card gains a *controlled* embed: that frame loads through the bridge, the
@@ -542,7 +586,7 @@ try {
   tc.applyTaskCardSpec({ op: "upsert", id: applied.id, title: "全屏应用卡", blocks: controlledBlocks });
   const appTarget = tc.taskBridgeTarget(url);
   void pluginPhase
-    .catch((error) => log("PLUGINCHAIN " + String(error !== null && error.message ? error.message : error)))
+    .catch((error) => log("PLUGINCHAIN " + String(error !== null && error.message ? error.message : error) + " @ " + String(error !== null && error.stack ? error.stack : "").split("\\n").slice(1, 3).join(" | ").slice(0, 300)))
     .then(() => new Promise((resolve) => setTimeout(resolve, 2200))) // iframe → proxy → injected agent → ws
     .then(async () => {
       ReactDOM.flushSync(() => {});
@@ -564,6 +608,8 @@ try {
         " summary=" + JSON.stringify(String(executed !== null && executed !== void 0 ? executed.summary : "").slice(0, 160)));
     })
     .catch((error) => log("BRIDGECHAIN " + String(error !== null && error.message ? error.message : error)))
+    .then(() => conversationPhase())
+    .catch((error) => log("CONVERSATIONCHAIN " + String(error !== null && error.message ? error.message : error)))
     .then(() => { window.__dshHarnessDone = true; });
 } catch (error) {
   log("ERROR " + (error && error.message ? error.message : String(error)));
@@ -779,6 +825,10 @@ const instanceOk = instance !== null &&
   // and the same feature works from a [canvas] op list: addPlugin adds a second item,
   // rebuild re-materializes the bundle (load-2) and remounts it
   pluginSpecOk &&
+  // the **main conversation** route: a [canvas] block in a chat row is picked up, applied to
+  // the canvas it names, and the board shows a notice that opens exactly that canvas
+  /CONVERSATION applied=true canvas=active items=1 plugin=true state=mounted notice="画布「主对话画布」已应用：新增插件 1"/.test(boardText) &&
+  /CONVERSATIONCLICK view=true name="主对话画布" active=true hosts=1 error="none" noticeGone=true/.test(boardText) &&
   // the agent operated the real embedded page through the bridge
   /BRIDGE state=connected title="本地应用" ok=true count=4 clicks=2 badge=受控 · 已连接/.test(boardText);
 const fullOk = boardText.includes("BOARD cards=") &&
