@@ -1517,6 +1517,128 @@ check(
 );
 offNotice();
 
+// ---- links between cards (workspace context sharing + the dashed group frame) ----
+const linkCanvas = tc.canvasCreate("连线画布");
+const linkA = tc.canvasAddControl(linkCanvas.id, "heading", 40, 40, { kind: "heading", text: "控制器设计" });
+const linkB = tc.canvasAddControl(linkCanvas.id, "checklist", 420, 40, { kind: "checklist", key: "todo", items: [{ id: "a", label: "整定 Kp" }, { id: "b", label: "写报告" }] });
+const linkC = tc.canvasAddControl(linkCanvas.id, "kv", 40, 320, { kind: "kv", rows: [["采样周期", "10 ms"]] });
+const linkAB = tc.canvasLinkAdd(linkCanvas.id, linkA, linkB, "context");
+check(
+  "a link joins two items, normalised and typed",
+  linkAB !== null &&
+    linkAB.kind === "context" &&
+    linkAB.from === (linkA < linkB ? linkA : linkB) &&
+    linkAB.to === (linkA < linkB ? linkB : linkA) &&
+    // the same pair drawn the other way round is the same edge, not a second one
+    tc.canvasLinkAdd(linkCanvas.id, linkB, linkA, "context").id === linkAB.id &&
+    Object.keys(tc.canvasSnapshot().canvases[linkCanvas.id].links).length === 1 &&
+    tc.canvasLinksOf(tc.canvasSnapshot().canvases[linkCanvas.id], linkA).length === 1 &&
+    // an item cannot link to itself or to something that is not on this canvas
+    tc.canvasLinkAdd(linkCanvas.id, linkA, linkA, "context") === null &&
+    tc.canvasLinkAdd(linkCanvas.id, linkA, "cc-nope", "context") === null &&
+    tc.sanitizeCanvasLink({ from: "a", to: "b", kind: "nonsense" }, void 0).kind === "context" &&
+    tc.sanitizeCanvasLink({ from: "a", to: "a" }, void 0) === null
+);
+const linkBC = tc.canvasLinkAdd(linkCanvas.id, linkB, linkC, "context");
+check(
+  "connected items form one group for the dashed frame",
+  (() => {
+    const canvas = tc.canvasSnapshot().canvases[linkCanvas.id];
+    const clusters = tc.canvasLinkClusters(canvas);
+    return linkBC !== null &&
+      clusters.length === 1 &&
+      clusters[0].ids.slice().sort().join(",") === [linkA, linkB, linkC].sort().join(",") &&
+      clusters[0].links.length === 2;
+  })()
+);
+check(
+  "a linked neighbour contributes its content as shared workspace context",
+  (() => {
+    const peers = tc.linkedCardsOf(linkB);
+    // The section is written for the card a session starts on: linkA's neighbour is the
+    // checklist, so the checklist's items are what that session inherits.
+    const section = tc.composeLinkPromptSection(linkA);
+    return peers.length === 2 &&
+      peers.some((peer) => peer.id === linkA) &&
+      section.includes("共享的工作区上下文") &&
+      section.includes("整定 Kp") &&
+      section.includes("写报告") &&
+      tc.composeLinkPromptSection("cc-unlinked") === "" &&
+      tc.taskBlocksAsContext([{ kind: "kv", rows: [["采样周期", "10 ms"]] }]).includes("采样周期=10 ms")
+  })()
+);
+check(
+  "the canvas prompt lists the link groups and teaches the ops",
+  (() => {
+    const canvas = tc.canvasSnapshot().canvases[linkCanvas.id];
+    const section = tc.composeCanvasLinkSection(canvas);
+    const prompt = tc.composeCanvasChatPrompt({ canvasId: linkCanvas.id, canvas }, "把这两块内容合并看看");
+    return section.includes("画布上已有的连线") &&
+      section.includes("共享工作区上下文") &&
+      prompt.includes('"op": "link"') &&
+      prompt.includes('"op": "unlink"') &&
+      tc.composeCanvasLinkSection(tc.canvasCreate("空画布没有连线")) === "";
+  })()
+);
+check(
+  "canvas ops can draw and remove links",
+  (() => {
+    const spec = tc.parseCanvasSpec('[canvas] { "ops": [ { "op": "link", "from": "' + linkC + '", "to": "' + linkA + '" }, { "op": "unlink", "from": "' + linkA + '", "to": "' + linkB + '" }, { "op": "link", "from": "' + linkA + '" } ] } [/canvas]');
+    if (spec === null || spec.ops.length !== 2 || spec.dropped.length !== 1) return false;
+    const applied = tc.applyCanvasSpec(linkCanvas.id, spec);
+    const canvas = tc.canvasSnapshot().canvases[linkCanvas.id];
+    const pair = linkC < linkA ? linkC + "|" + linkA : linkA + "|" + linkC;
+    return applied.changed === 2 &&
+      applied.message.includes("连线 1") &&
+      applied.message.includes("删除连线 1") &&
+      Object.values(canvas.links).length === 2 &&
+      Object.values(canvas.links).some((link) => link.from + "|" + link.to === pair);
+  })()
+);
+check(
+  "deleting an item removes the edges it carried, and merging keeps links",
+  (() => {
+    const before = Object.keys(tc.canvasSnapshot().canvases[linkCanvas.id].links).length;
+    tc.canvasDeleteCard(linkCanvas.id, linkB);
+    const after = tc.canvasSnapshot().canvases[linkCanvas.id];
+    const merged = tc.mergeCanvasState(tc.canvasSnapshot(), {
+      canvases: {
+        [linkCanvas.id]: {
+          id: linkCanvas.id,
+          name: after.name,
+          updatedAt: Date.now() + 2000,
+          cards: {},
+          links: { "lk-remote-1": { id: "lk-remote-1", from: linkA, to: linkC, kind: "context", updatedAt: Date.now() + 2000, rev: "r" } },
+        },
+      },
+    });
+    return before === 2 &&
+      Object.values(after.links).length === 1 &&
+      // a remote edge for the same pair wins by timestamp, and stays a single edge
+      Object.values(merged.canvases[linkCanvas.id].links).some((link) => link.rev === "r");
+  })()
+);
+check(
+  "the link layer renders curves, the dashed group frame and the chip",
+  (() => {
+    const html = renderToString(jsx(tc.CanvasLinkLayer, {
+      links: [{ id: "lk-1", from: "a", to: "b", kind: "context" }],
+      clusters: [{ ids: ["a", "b"], links: [{ id: "lk-1", from: "a", to: "b", kind: "context" }] }],
+      boxes: { a: { x: 0, y: 0, w: 300, h: 200 }, b: { x: 400, y: 60, w: 300, h: 200 } },
+      scale: 1,
+      onRemove: () => {},
+      onExplain: () => {}
+    }));
+    return html.includes("dsh-tc-linkEdge") &&
+      html.includes("dsh-tc-linkFrame") &&
+      html.includes("dsh-tc-linkChip") &&
+      html.includes("工作区上下文共享") &&
+      html.includes("2 项") &&
+      // nothing to draw means no layer at all
+      renderToString(jsx(tc.CanvasLinkLayer, { links: [], clusters: [], boxes: {}, scale: 1, onRemove: () => {}, onExplain: () => {} })) === "";
+  })()
+);
+
 // ---- images on the canvas (regression: a remote picture that cannot load) ----
 const imageCanvas = tc.canvasCreate("图片画布回归");
 const remoteImageId = tc.canvasAddControl(imageCanvas.id, "image", 40, 40, { kind: "image", src: "https://upload.wikimedia.org/wikipedia/commons/thumb/x/280px-y.png", caption: "取不到的图" });

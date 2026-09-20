@@ -647,7 +647,69 @@ try {
                       " loaded=" + loadedImages() +
                       " failed=" + document.querySelectorAll(".dsh-tc-imgFailed").length +
                       " stored=" + stored.sort().join(","));
+                    // ---- links: draw one between two items, watch the dashed group, remove it ----
+                    // Two fresh controls at known, non-overlapping spots: the earlier items cascade
+                    // near the origin, so a hit test there would be ambiguous.
+                    const linkCanvasId = tc.canvasSnapshot().activeId;
+                    const nodesBefore = document.querySelectorAll(".dsh-tc-canvasPlane [data-id]").length;
+                    const linkA = tc.canvasAddControl(linkCanvasId, "heading", 900, 40, { kind: "heading", text: "连线源" });
+                    const linkB = tc.canvasAddControl(linkCanvasId, "kv", 900, 300, { kind: "kv", rows: [["共享键", "共享值"]] });
+                    ReactDOM.flushSync(() => {});
+                    return waitFor(() => document.querySelectorAll(".dsh-tc-canvasPlane [data-id]").length >= nodesBefore + 2, 6000).then(() => {
+                    const linkItems = Object.values(tc.canvasSnapshot().canvases[linkCanvasId].cards);
+                    const linkButton = document.querySelector('[data-id="' + linkA + '"] button[title^="与另一"]');
+                    const linkProbe = document.querySelectorAll('button[title^="与另一"]').length + "/" + document.querySelectorAll(".dsh-tc-canvasPlane [data-id]").length;
+                    if (linkButton !== null) linkButton.click();
+                    ReactDOM.flushSync(() => {});
+                    const band = document.querySelector(".dsh-tc-linkMode");
+                    const bandHint = document.querySelector(".dsh-tc-linkModeHint");
+                    const targetNode = document.querySelector('[data-id="' + linkB + '"]');
+                    const targetRect = targetNode === null ? null : targetNode.getBoundingClientRect();
+                    const scrollNode = document.querySelector(".dsh-tc-canvasScroll");
+                    const scrollRect = scrollNode === null ? null : scrollNode.getBoundingClientRect();
+                    const view = tc.canvasSnapshot().views[linkCanvasId] ?? { x: 0, y: 0, k: 1 };
+                    const probe = targetRect === null || scrollRect === null ? "none" : JSON.stringify({
+                      clickX: Math.round(targetRect.left + targetRect.width / 2 - scrollRect.left),
+                      clickY: Math.round(targetRect.top + targetRect.height / 2 - scrollRect.top),
+                      planeX: Math.round((targetRect.left + targetRect.width / 2 - scrollRect.left - view.x) / view.k),
+                      planeY: Math.round((targetRect.top + targetRect.height / 2 - scrollRect.top - view.y) / view.k),
+                      offset: targetNode === null ? "none" : [targetNode.offsetLeft, targetNode.offsetTop, targetNode.offsetWidth, targetNode.offsetHeight].join(","),
+                      nodes: document.querySelectorAll(".dsh-tc-canvasPlane [data-id]").length
+                    });
+                    if (band !== null && targetRect !== null) {
+                      band.dispatchEvent(new PointerEvent("pointerdown", {
+                        bubbles: true, button: 0, pointerId: 21, pointerType: "mouse",
+                        clientX: targetRect.left + targetRect.width / 2, clientY: targetRect.top + targetRect.height / 2
+                      }));
+                    }
+                    ReactDOM.flushSync(() => {});
+                    const linked = tc.canvasSnapshot().canvases[linkCanvasId];
+                    const frameNode = document.querySelector(".dsh-tc-linkFrame");
+                    const frameLabel = document.querySelector(".dsh-tc-linkFrameLabel");
+                    const linkPrompt = tc.composeCanvasChatPrompt({ canvasId: linkCanvasId, canvas: linked }, "共享上下文");
+                    log("LINK overlay=" + (band !== null) +
+                      " hint=" + JSON.stringify(bandHint === null ? "none" : bandHint.textContent) +
+                      " items=" + linkItems.length +
+                      " links=" + Object.keys(linked.links).length +
+                      " frames=" + document.querySelectorAll(".dsh-tc-linkFrame").length +
+                      " frameCount=" + JSON.stringify(frameNode === null ? "none" : frameNode.getAttribute("data-count")) +
+                      " edges=" + document.querySelectorAll(".dsh-tc-linkEdge").length +
+                      " chips=" + document.querySelectorAll(".dsh-tc-linkChip").length +
+                      " label=" + JSON.stringify(frameLabel === null ? "none" : frameLabel.textContent) +
+                      " dashed=" + JSON.stringify(frameNode === null ? "none" : getComputedStyle(frameNode).borderStyle) +
+                      " prompt=" + linkPrompt.includes("画布上已有的连线") +
+                      " nodes=" + document.querySelectorAll(".dsh-tc-canvasPlane [data-id]").length +
+                      " linkable=" + linkProbe +
+                      " placed=" + probe +
+                      " hintText=" + JSON.stringify(String(document.querySelector(".dsh-tc-canvasHint") === null ? "none" : document.querySelector(".dsh-tc-canvasHint").textContent).slice(0, 40)));
+                    const chip = document.querySelector(".dsh-tc-linkChip");
+                    if (chip !== null) chip.click();
+                    ReactDOM.flushSync(() => {});
+                    log("UNLINK links=" + Object.keys(tc.canvasSnapshot().canvases[linkCanvasId].links).length +
+                      " frames=" + document.querySelectorAll(".dsh-tc-linkFrame").length +
+                      " edges=" + document.querySelectorAll(".dsh-tc-linkEdge").length);
                     return true;
+                    });
                   });
               });
             });
@@ -915,6 +977,10 @@ const instanceOk = instance !== null &&
   /IMAGE settled=true imgs=1 loaded=1 failed=1 picker=true hint="图片加载失败取不到 127\.0\.0\.1/.test(boardText) &&
   // …and picking a local file replaces the control with a data URL that renders without network
   /IMAGELOCAL replaced=true loaded=2 failed=0 stored=local,remote/.test(boardText) &&
+  // links: 🔗 starts the drawing mode, clicking the second item connects them, the group gets
+  // a dashed frame around it, and the chip on the edge removes it again
+  /LINK overlay=true hint="连线中：点另一张卡片完成连线（Esc 或右键取消）" items=7 links=1 frames=1 frameCount="2" edges=1 chips=1 label="⚯ 工作区上下文共享 · 2 项" dashed="dashed" prompt=true/.test(boardText) &&
+  /UNLINK links=0 frames=0 edges=0/.test(boardText) &&
   // the agent operated the real embedded page through the bridge
   /BRIDGE state=connected title="本地应用" ok=true count=4 clicks=2 badge=受控 · 已连接/.test(boardText);
 const fullOk = boardText.includes("BOARD cards=") &&
