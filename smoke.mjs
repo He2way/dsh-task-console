@@ -1824,6 +1824,50 @@ check(
 );
 check("canvas share string available for the active canvas", typeof tc.canvasShareString() === "string" && tc.canvasShareString().startsWith("DSHCANVAS1:"));
 
+// ---- 3D model viewer (embedded viewer page + the model control kind) ----
+const viewerHtml = await tc.taskViewerHtml();
+check(
+  "embedded 3D viewer decodes to the standalone page",
+  typeof viewerHtml === "string" &&
+    viewerHtml.startsWith("<!DOCTYPE html>") &&
+    viewerHtml.includes("__viewerInfo") &&
+    viewerHtml.includes("parseGltf") &&
+    createHash("sha256").update(viewerHtml, "utf8").digest("hex") === tc.TASK_VIEWER_SHA256
+);
+const viewerSource = join(HERE, "viewer", "viewer.html");
+check("embedded viewer matches viewer/viewer.html", !existsSync(viewerSource) || readFileSync(viewerSource, "utf8") === viewerHtml);
+check("embedded viewer decode is cached", (await tc.taskViewerHtml()) === viewerHtml);
+const modelBlock = tc.sanitizeTaskBlock(tc.taskBlockDefault("model"), 0);
+check(
+  "the model control keeps its viewer options and rejects unsafe sources",
+  modelBlock.kind === "model" &&
+    modelBlock.src === "" &&
+    modelBlock.height === 360 &&
+    modelBlock.grid === true &&
+    modelBlock.background === "dark" &&
+    // a second sanitize round-trip changes nothing (canvas adopt / explode do exactly this)
+    JSON.stringify(tc.sanitizeTaskBlock(modelBlock, 0)) === JSON.stringify(modelBlock) &&
+    tc.sanitizeTaskBlock({ kind: "model", src: "data:application/octet-stream;base64,AAAA", name: "x.glb" }, 0).name === "x.glb" &&
+    tc.sanitizeTaskBlock({ kind: "model", src: "file:///C:/m.glb" }, 0) === null &&
+    tc.sanitizeTaskBlock({ kind: "model", src: "javascript:alert(1)" }, 0) === null &&
+    // the picker offers it, and the model extensions are recognised for drops
+    tc.TASK_CANVAS_ADD_KINDS.includes("model") &&
+    tc.isTaskModelFile({ name: "design.glb" }) &&
+    tc.isTaskModelFile({ name: "part.STL" }) &&
+    tc.isTaskModelFile({ name: "scene.obj" }) &&
+    !tc.isTaskModelFile({ name: "notes.txt" }) &&
+    tc.CANVAS_MODEL_INLINE > 0
+);
+check(
+  "the model viewer renders a sandboxed frame with its toolbar",
+  renderToString(jsx(tc.TaskModelView, { block: modelBlock })).includes("dsh-tc-model")
+);
+check(
+  "the canvas prompt teaches the model control",
+  tc.composeCanvasChatPrompt({ canvasId: canvas.id, canvas: tc.canvasSnapshot().canvases[canvas.id] }, "把一个 glb 放上来").includes("model") &&
+    tc.composeCanvasChatPrompt({ canvasId: canvas.id, canvas: tc.canvasSnapshot().canvases[canvas.id] }, "x").includes("3D 模型控件")
+);
+
 // ---- architecture diagram dock (embedded archify artifact) ----
 const diagramHtml = await tc.taskDiagramHtml();
 check(

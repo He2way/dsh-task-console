@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>3D 模型查看器</title>
+<style>
+  :root { --fg:#0f172a; --fg2:#475569; --line:rgba(148,163,184,.45); --panel:rgba(248,250,252,.94); --acc:#6366f1; }
+  html,body { margin:0; height:100%; overflow:hidden; font:12px/1.5 system-ui,"Segoe UI",sans-serif; color:var(--fg); background:#eef2ff; }
+  body[data-bg="dark"] { --fg:#e2e8f0; --fg2:#94a3b8; --panel:rgba(15,23,42,.92); background:#0b1120; }
+  #app { position:fixed; inset:0; display:flex; flex-direction:column; }
+  #bar { flex:none; display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding:5px 8px; background:var(--panel); border-bottom:1px solid var(--line); }
+  #name { font-weight:600; max-width:38%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #info { color:var(--fg2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:60px; }
+  button { font:inherit; color:inherit; background:transparent; border:1px solid var(--line); border-radius:8px; padding:2px 8px; cursor:pointer; }
+  button:hover { border-color:var(--acc); color:var(--acc); }
+  button[data-on="1"] { border-color:var(--acc); color:var(--acc); background:rgba(99,102,241,.12); }
+  #stage { position:relative; flex:1; min-height:0; }
+  canvas { position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; cursor:grab; }
+  canvas:active { cursor:grabbing; }
+  #overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:14px; text-align:center; color:var(--fg2); pointer-events:none; }
+  #overlay[data-busy="1"] { color:var(--acc); }
+  #overlay[data-error="1"] { color:#be123c; }
+  #drop { position:absolute; inset:0; pointer-events:none; border:2px dashed transparent; }
+  #drop[data-over="1"] { border-color:var(--acc); background:rgba(99,102,241,.08); }
+</style>
+</head>
+<body data-bg="dark">
+<div id="app">
+  <div id="bar">
+    <span id="name">3D 模型查看器</span>
+    <span id="info">把 .glb/.gltf/.obj/.stl 文件拖进来，或点「打开文件…」</span>
+    <button id="open" type="button">打开文件…</button>
+    <button id="fit" type="button">重置视角</button>
+    <button id="wire" type="button" title="显示三角网格边">线框</button>
+    <button id="grid" type="button" data-on="1" title="显示地面网格">网格</button>
+    <button id="bg" type="button" title="深色/浅色背景">背景</button>
+  </div>
+  <div id="stage">
+    <canvas id="gl"></canvas>
+    <div id="drop"></div>
+    <div id="overlay">等待模型…</div>
+  </div>
+</div>
+<input id="file" type="file" accept=".glb,.gltf,.obj,.stl,model/gltf-binary,model/gltf+json" style="display:none">
+<script>
+"use strict";
+// A dependency-free WebGL viewer for glTF/GLB (+ OBJ / STL). It runs inside a sandboxed
+// iframe in the workbench, so it talks to its host page with postMessage only:
+//   host → viewer: { type:"load", name, buffer } | { type:"options", wireframe, background, grid }
+//                  | { type:"clear" } | { type:"status" }
+//   viewer → host: { type:"ready" } | { type:"status", … } | { type:"camera", yaw, pitch }
+//                  | { type:"dropped", name, buffer, size }   (the host decides whether to keep it)
+// `window.__viewerBoot` mirrors that handshake for hosts (and tests) that cannot wait on events.
+window.__viewerBoot = "start";
+// Record the first error: a host (or a test) can read it when the handshake never completes.
+window.addEventListener("error", (event) => { if (window.__viewerError === void 0) window.__viewerError = String(event.message); });
+const overlay = document.getElementById("overlay");
+const dropHint = document.getElementById("drop");
+const nameEl = document.getElementById("name");
+const infoEl = document.getElementById("info");
+const canvas = document.getElementById("gl");
+const fileInput = document.getElementById("file");
+const state = {
+  model: null,
+  wireframe: false,
+  grid: true,
+  background: "dark",
+  yaw: 0.6,
+  pitch: 0.42,
+  distance: 3,
+  target: [0, 0, 0],
+  radius: 1,
+  textures: 0,
+  message: ""
+};
+const post = (message, transfer) => { try { parent.postMessage(message, "*", transfer); } catch { /* no host */ } };
+const setOverlay = (text, kind) => {
+  overlay.textContent = text;
+  if (kind === void 0) overlay.removeAttribute("data-busy"), overlay.removeAttribute("data-error");
+  else overlay.setAttribute(kind === "error" ? "data-error" : "data-busy", "1"), overlay.removeAttribute(kind === "error" ? "data-busy" : "data-error");
+};
+
+//#region gl
+const gl = canvas.getContext("webgl", { antialias: true, alpha: false, preserveDrawingBuffer: true });
+if (gl === null) setOverlay("这个浏览器/环境不支持 WebGL，无法显示 3D 模型", "error");
+// 32-bit index buffers are an extension in WebGL1: without it a big mesh cannot be drawn.
+const uintIndices = gl === null ? false : gl.getExtension("OES_element_index_uint") !== null;
+/** Wireframe building walks every triangle in JS: refuse absurd meshes instead of hanging. */
+const WIRE_TRIANGLE_LIMIT = 200000;
+const SHADER_VS = "attribute vec3 aPos;attribute vec3 aNormal;attribute vec2 aUv;uniform mat4 uProj;uniform mat4 uView;uniform mat4 uModel;uniform mat3 uNormal;varying vec3 vNormal;varying vec2 vUv;varying vec3 vEye;void main(){vec4 world=uModel*vec4(aPos,1.0);vec4 eye=uView*world;vEye=eye.xyz;vNormal=uNormal*aNormal;vUv=aUv;gl_Position=uProj*eye;}";
+const SHADER_FS = "precision mediump float;varying vec3 vNormal;varying vec2 vUv;varying vec3 vEye;uniform vec4 uColor;uniform float uHasMap;uniform sampler2D uMap;uniform float uUnlit;void main(){vec4 base=uColor;if(uHasMap>0.5){base=base*texture2D(uMap,vUv);}if(base.a<0.01){discard;}if(uUnlit>0.5){gl_FragColor=base;return;}vec3 n=normalize(vNormal);vec3 lightDir=normalize(vec3(0.45,0.75,0.5));float diff=max(dot(n,lightDir),0.0);vec3 viewDir=normalize(-vEye);vec3 halfDir=normalize(lightDir+viewDir);float spec=pow(max(dot(n,halfDir),0.0),24.0)*0.25;float ambient=0.42;gl_FragColor=vec4(base.rgb*(ambient+diff*0.75)+vec3(spec),base.a);}";
+const SHADER_LINE_FS = "precision mediump float;uniform vec4 uColor;void main(){gl_FragColor=uColor;}";
+const compile = (type, source) => {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (gl.getShaderParameter(shader, gl.COMPILE_STATUS) !== true) throw new Error("着色器编译失败：" + gl.getShaderInfoLog(shader));
+  return shader;
+};
+const program = (vs, fs) => {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(p);
+  if (gl.getProgramParameter(p, gl.LINK_STATUS) !== true) throw new Error("着色器链接失败：" + gl.getProgramInfoLog(p));
+  return p;
+};
+const solid = program(SHADER_VS, SHADER_FS);
+const lines = program(SHADER_VS, SHADER_LINE_FS);
+const uniforms = (p) => ({
+  proj: gl.getUniformLocation(p, "uProj"),
+  view: gl.getUniformLocation(p, "uView"),
+  model: gl.getUniformLocation(p, "uModel"),
+  normal: gl.getUniformLocation(p, "uNormal"),
+  color: gl.getUniformLocation(p, "uColor"),
+  hasMap: gl.getUniformLocation(p, "uHasMap"),
+  map: gl.getUniformLocation(p, "uMap"),
+  unlit: gl.getUniformLocation(p, "uUnlit")
+});
+const solidU = uniforms(solid);
+const lineU = uniforms(lines);
+const attrs = (p) => ({ pos: gl.getAttribLocation(p, "aPos"), normal: gl.getAttribLocation(p, "aNormal"), uv: gl.getAttribLocation(p, "aUv") });
+const solidA = attrs(solid);
+const lineA = attrs(lines);
+//#endregion
+//#region math
+const m4 = () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
+const mul = (a, b) => {
+  const out = m4();
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+    out[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3];
+  }
+  return out;
+};
+const perspective = (fov, aspect, near, far) => {
+  const f = 1 / Math.tan(fov / 2);
+  return new Float32Array([f / aspect,0,0,0, 0,f,0,0, 0,0,(far + near) / (near - far),-1, 0,0,(2 * far * near) / (near - far),0]);
+};
+const lookAt = (eye, center, up) => {
+  const z = normalize([eye[0] - center[0], eye[1] - center[1], eye[2] - center[2]]);
+  const x = normalize(cross(up, z));
+  const y = cross(z, x);
+  return new Float32Array([x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0, -dot(x, eye),-dot(y, eye),-dot(z, eye),1]);
+};
+const normalize = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+/** Column-major TRS → matrix (quaternion + scale). */
+const compose = (t, r, s) => {
+  const [x, y, z, w] = r;
+  const x2 = x + x, y2 = y + y, z2 = z + z;
+  const xx = x * x2, xy = x * y2, xz = x * z2, yy = y * y2, yz = y * z2, zz = z * z2, wx = w * x2, wy = w * y2, wz = w * z2;
+  const [sx, sy, sz] = s;
+  return new Float32Array([
+    (1 - (yy + zz)) * sx, (xy + wz) * sx, (xz - wy) * sx, 0,
+    (xy - wz) * sy, (1 - (xx + zz)) * sy, (yz + wx) * sy, 0,
+    (xz + wy) * sz, (yz - wx) * sz, (1 - (xx + yy)) * sz, 0,
+    t[0], t[1], t[2], 1
+  ]);
+};
+const normalMatrix = (m) => {
+  const a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[6], g = m[8], h = m[9], i = m[10];
+  const det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g) || 1e-8;
+  return new Float32Array([
+    (e * i - f * h) / det, (c * h - b * i) / det, (b * f - c * e) / det,
+    (f * g - d * i) / det, (a * i - c * g) / det, (c * d - a * f) / det,
+    (d * h - e * g) / det, (b * g - a * h) / det, (a * e - b * d) / det
+  ]);
+};
+//#endregion
+//#region gltf
+const COMPONENTS = { 5120: Int8Array, 5121: Uint8Array, 5122: Int16Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
+const SIZES = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
+const decodeBase64 = (text) => {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+};
+/** Read one accessor into the typed array the buffer view holds (handles byteStride). */
+const readAccessor = (gltf, buffers, index) => {
+  const accessor = gltf.accessors === void 0 ? void 0 : gltf.accessors[index];
+  if (accessor === void 0) return null;
+  const View = COMPONENTS[accessor.componentType];
+  const size = SIZES[accessor.type];
+  if (View === void 0 || size === void 0) return null;
+  const view = gltf.bufferViews[accessor.bufferView];
+  if (view === void 0) return null;
+  const buffer = buffers[view.buffer];
+  if (buffer === void 0) return null;
+  const base = (view.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
+  if (view.byteStride === void 0 || view.byteStride === 0 || view.byteStride === size * View.BYTES_PER_ELEMENT) {
+    return new View(buffer, base, accessor.count * size);
+  }
+  const out = new View(accessor.count * size);
+  const stride = view.byteStride;
+  for (let i = 0; i < accessor.count; i++) {
+    const source = new View(buffer, base + i * stride, size);
+    out.set(source, i * size);
+  }
+  return out;
+};
+const TRIANGLE_MODES = { 4: "triangles", 5: "strip", 6: "fan" };
+const expandIndices = (indices, mode) => {
+  if (indices === null || mode === "triangles") return { indices, rebuilt: false };
+  const out = [];
+  for (let i = 0; i + 2 < indices.length; i++) {
+    if (mode === "strip") { if (i % 2 === 0) out.push(indices[i], indices[i + 1], indices[i + 2]); else out.push(indices[i + 1], indices[i], indices[i + 2]); }
+    else out.push(indices[0], indices[i + 1], indices[i + 2]);
+  }
+  return { indices: new Uint32Array(out), rebuilt: true };
+};
+const makeTexture = (gltf, buffers, index) => {
+  const texture = gltf.textures === void 0 ? void 0 : gltf.textures[index];
+  const source = texture === void 0 || gltf.images === void 0 ? void 0 : gltf.images[texture.source];
+  if (source === void 0) return null;
+  try {
+    let bytes = null;
+    if (typeof source.uri === "string" && source.uri.startsWith("data:")) bytes = new Uint8Array(decodeBase64(source.uri.slice(source.uri.indexOf(",") + 1)));
+    else if (source.bufferView !== void 0) {
+      const view = gltf.bufferViews[source.bufferView];
+      bytes = new Uint8Array(buffers[view.buffer], view.byteOffset ?? 0, view.byteLength);
+    }
+    if (bytes === null) return null;
+    const blob = new Blob([bytes], { type: source.mimeType ?? "image/png" });
+    const image = new Image();
+    image.src = URL.createObjectURL(blob);
+    const textureId = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, textureId);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([180, 180, 190, 255]));
+    image.onload = () => {
+      gl.bindTexture(gl.TEXTURE_2D, textureId);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+      const powerOfTwo = (image.width & (image.width - 1)) === 0 && (image.height & (image.height - 1)) === 0;
+      if (powerOfTwo) gl.generateMipmap(gl.TEXTURE_2D);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, powerOfTwo ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      URL.revokeObjectURL(image.src);
+      draw();
+    };
+    image.onerror = () => { URL.revokeObjectURL(image.src); };
+    return textureId;
+  } catch {
+    return null;
+  }
+};
+/** Build the drawable scene out of one parsed glTF document. */
+const buildScene = (gltf, buffers, baseName) => {
+  const primitives = [];
+  let triangles = 0;
+  let meshes = 0;
+  let textured = 0;
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  const materials = (gltf.materials ?? []).map((material) => {
+    const pbr = material.pbrMetallicRoughness ?? {};
+    const factor = Array.isArray(pbr.baseColorFactor) ? pbr.baseColorFactor : [1, 1, 1, 1];
+    const textureIndex = pbr.baseColorTexture === void 0 ? void 0 : pbr.baseColorTexture.index;
+    return {
+      color: [factor[0], factor[1], factor[2], factor[3]],
+      texture: textureIndex === void 0 ? null : makeTexture(gltf, buffers, textureIndex),
+      doubleSided: material.doubleSided === true,
+      alphaMask: material.alphaMode === "MASK",
+      alphaBlend: material.alphaMode === "BLEND"
+    };
+  });
+  const walk = (nodes, parent, nodeIndex) => {
+    const node = nodes[nodeIndex];
+    if (node === void 0) return;
+    const local = Array.isArray(node.matrix) && node.matrix.length === 16
+      ? new Float32Array(node.matrix)
+      : compose(node.translation ?? [0, 0, 0], node.rotation ?? [0, 0, 0, 1], node.scale ?? [1, 1, 1]);
+    const world = mul(parent, local);
+    if (node.mesh !== void 0) {
+      const mesh = gltf.meshes[node.mesh];
+      meshes += 1;
+      for (const primitive of mesh.primitives ?? []) {
+        const mode = TRIANGLE_MODES[primitive.mode === void 0 ? 4 : primitive.mode];
+        if (mode === void 0) continue;
+        const position = readAccessor(gltf, buffers, primitive.attributes.POSITION);
+        if (position === null) continue;
+        const normal = primitive.attributes.NORMAL === void 0 ? null : readAccessor(gltf, buffers, primitive.attributes.NORMAL);
+        const uv = primitive.attributes.TEXCOORD_0 === void 0 ? null : readAccessor(gltf, buffers, primitive.attributes.TEXCOORD_0);
+        let indices = primitive.indices === void 0 ? null : readAccessor(gltf, buffers, primitive.indices);
+        if (indices === null) {
+          indices = new Uint32Array(position.length / 3);
+          for (let i = 0; i < indices.length; i++) indices[i] = i;
+        }
+        const expanded = expandIndices(indices, mode);
+        indices = expanded.rebuilt ? expanded.indices : indices;
+        const vertexCount = position.length / 3;
+        const worldPositions = new Float32Array(position.length);
+        const worldNormals = new Float32Array(position.length);
+        const normalMat = normalMatrix(world);
+        for (let i = 0; i < vertexCount; i++) {
+          const px = position[i * 3], py = position[i * 3 + 1], pz = position[i * 3 + 2];
+          const wx = world[0] * px + world[4] * py + world[8] * pz + world[12];
+          const wy = world[1] * px + world[5] * py + world[9] * pz + world[13];
+          const wz = world[2] * px + world[6] * py + world[10] * pz + world[14];
+          worldPositions[i * 3] = wx; worldPositions[i * 3 + 1] = wy; worldPositions[i * 3 + 2] = wz;
+          for (let axis = 0; axis < 3; axis++) {
+            const value = wx === wx ? [wx, wy, wz][axis] : 0;
+            if (value < min[axis]) min[axis] = value;
+            if (value > max[axis]) max[axis] = value;
+          }
+          if (normal !== null) {
+            const nx = normal[i * 3], ny = normal[i * 3 + 1], nz = normal[i * 3 + 2];
+            worldNormals[i * 3] = normalMat[0] * nx + normalMat[3] * ny + normalMat[6] * nz;
+            worldNormals[i * 3 + 1] = normalMat[1] * nx + normalMat[4] * ny + normalMat[7] * nz;
+            worldNormals[i * 3 + 2] = normalMat[2] * nx + normalMat[5] * ny + normalMat[8] * nz;
+          }
+        }
+        if (normal === null) {
+          // Flat normals from the triangles, so an unlit mesh still reads as a solid.
+          for (let i = 0; i + 2 < indices.length; i += 3) {
+            const a = indices[i] * 3, b = indices[i + 1] * 3, c = indices[i + 2] * 3;
+            const ux = worldPositions[b] - worldPositions[a], uy = worldPositions[b + 1] - worldPositions[a + 1], uz = worldPositions[b + 2] - worldPositions[a + 2];
+            const vx = worldPositions[c] - worldPositions[a], vy = worldPositions[c + 1] - worldPositions[a + 1], vz = worldPositions[c + 2] - worldPositions[a + 2];
+            const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+            for (const vertex of [a, b, c]) {
+              worldNormals[vertex] += nx; worldNormals[vertex + 1] += ny; worldNormals[vertex + 2] += nz;
+            }
+          }
+          for (let i = 0; i < vertexCount; i++) {
+            const length = Math.hypot(worldNormals[i * 3], worldNormals[i * 3 + 1], worldNormals[i * 3 + 2]) || 1;
+            worldNormals[i * 3] /= length; worldNormals[i * 3 + 1] /= length; worldNormals[i * 3 + 2] /= length;
+          }
+        }
+        const material = primitive.material === void 0 ? null : materials[primitive.material];
+        if (material !== null && material.texture !== null) textured += 1;
+        const vao = {
+          pos: gl.createBuffer(),
+          normal: gl.createBuffer(),
+          uv: uv === null ? null : gl.createBuffer(),
+          index: gl.createBuffer()
+        };
+        gl.bindBuffer(gl.ARRAY_BUFFER, vao.pos);
+        gl.bufferData(gl.ARRAY_BUFFER, worldPositions, gl.STATIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, vao.normal);
+        gl.bufferData(gl.ARRAY_BUFFER, worldNormals, gl.STATIC_DRAW);
+        if (vao.uv !== null) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, vao.uv);
+          gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
+        }
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, vao.index);
+        const wide = indices.length > 65535;
+        if (wide && !uintIndices) throw new Error("模型顶点数超过 65535，而这个环境不支持 32 位索引，无法显示");
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, wide ? indices : new Uint16Array(indices), gl.STATIC_DRAW);
+        triangles += Math.floor(indices.length / 3);
+        // The CPU copy feeds the wireframe builder (deduping edges needs the topology).
+        primitives.push({ vao, count: indices.length, indexType: wide ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT, material, name: mesh.name ?? "", sourceIndices: indices });
+      }
+    }
+    for (const child of node.children ?? []) walk(nodes, world, child);
+  };
+  const scene = gltf.scenes === void 0 ? null : gltf.scenes[gltf.scene ?? 0];
+  if (scene === void 0 || scene === null) {
+    for (let i = 0; i < (gltf.nodes ?? []).length; i++) walk(gltf.nodes, m4(), i);
+  } else {
+    for (const node of scene.nodes ?? []) walk(gltf.nodes, m4(), node);
+  }
+  const finite = Number.isFinite(min[0]) && Number.isFinite(max[0]);
+  const center = finite ? [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2] : [0, 0, 0];
+  const size = finite ? [max[0] - min[0], max[1] - min[1], max[2] - min[2]] : [1, 1, 1];
+  const radius = Math.max(1e-3, Math.hypot(size[0], size[1], size[2]) / 2);
+  return { primitives, triangles, meshes, textured, center, size, radius, name: baseName, materials: materials.length };
+};
+/** glTF/GLB text or binary → scene. */
+const parseGltf = (buffer, baseName) => {
+  const view = new DataView(buffer);
+  let json = null;
+  let binaryChunk = null;
+  if (buffer.byteLength > 12 && view.getUint32(0, true) === 0x46546c67) {
+    const version = view.getUint32(4, true);
+    if (version !== 2) throw new Error("只支持 glTF 2.0 的 .glb（这个文件是版本 " + version + "）");
+    let offset = 12;
+    while (offset + 8 <= buffer.byteLength) {
+      const length = view.getUint32(offset, true);
+      const type = view.getUint32(offset + 4, true);
+      const start = offset + 8;
+      if (type === 0x4e4f534a) json = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, start, length)));
+      else if (type === 0x004e4942) binaryChunk = buffer.slice(start, start + length);
+      offset = start + length;
+    }
+  } else {
+    json = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer)));
+  }
+  if (json === null || typeof json !== "object") throw new Error("文件里没有找到 glTF JSON");
+  const buffers = (json.buffers ?? []).map((entry, index) => {
+    if (typeof entry.uri === "string" && entry.uri.startsWith("data:")) return decodeBase64(entry.uri.slice(entry.uri.indexOf(",") + 1));
+    if (entry.uri !== void 0) throw new Error("这个 glTF 引用了外部文件 " + entry.uri + "：请改用自包含的 .glb，或把 .bin/贴图内嵌进 .gltf");
+    if (index === 0 && binaryChunk !== null) return binaryChunk;
+    return new ArrayBuffer(0);
+  });
+  return buildScene(json, buffers, baseName);
+};
+//#endregion
+//#region obj / stl
+/** Minimal OBJ (v / vn / f) reader: positions, normals and triangles. */
+const parseObj = (text, baseName) => {
+  const positions = [];
+  const normals = [];
+  const triangles = [];
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (line.length === 0 || line.charCodeAt(0) === 35) continue;
+    const parts = line.trim().split(/\s+/);
+    if (parts[0] === "v" && parts.length >= 4) positions.push(Number(parts[1]), Number(parts[2]), Number(parts[3]));
+    else if (parts[0] === "vn" && parts.length >= 4) normals.push(Number(parts[1]), Number(parts[2]), Number(parts[3]));
+    else if (parts[0] === "f" && parts.length >= 4) {
+      const face = parts.slice(1).map((token) => {
+        const bits = token.split("/");
+        const vertex = Number(bits[0]);
+        return { v: (Number.isFinite(vertex) ? vertex : 1) - 1, n: bits.length > 2 && bits[2].length > 0 ? Number(bits[2]) - 1 : -1 };
+      });
+      for (let i = 1; i + 1 < face.length; i++) triangles.push(face[0], face[i], face[i + 1]);
+    }
+  }
+  if (positions.length === 0) throw new Error("这个 OBJ 里没有顶点数据");
+  const outPositions = new Float32Array(triangles.length * 3);
+  const outNormals = new Float32Array(triangles.length * 3);
+  triangles.forEach((vertex, index) => {
+    const p = vertex.v * 3;
+    outPositions[index * 3] = positions[p] ?? 0;
+    outPositions[index * 3 + 1] = positions[p + 1] ?? 0;
+    outPositions[index * 3 + 2] = positions[p + 2] ?? 0;
+    if (vertex.n >= 0) {
+      const n = vertex.n * 3;
+      outNormals[index * 3] = normals[n] ?? 0;
+      outNormals[index * 3 + 1] = normals[n + 1] ?? 0;
+      outNormals[index * 3 + 2] = normals[n + 2] ?? 0;
+    }
+  });
+  const json = {
+    buffers: [{ uri: "data:application/octet-stream;base64," + toBase64(new Float32Array([...outPositions, ...outNormals]).buffer) }],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: outPositions.byteLength },
+      { buffer: 0, byteOffset: outPositions.byteLength, byteLength: outNormals.byteLength }
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: outPositions.length / 3, type: "VEC3" },
+      { bufferView: 1, componentType: 5126, count: outNormals.length / 3, type: "VEC3" }
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 } }] }],
+    nodes: [{ mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+    scene: 0
+  };
+  return buildScene(json, [decodeBase64(json.buffers[0].uri.slice(json.buffers[0].uri.indexOf(",") + 1))], baseName);
+};
+/** Minimal binary/ASCII STL reader. */
+const parseStl = (buffer, baseName) => {
+  const view = new DataView(buffer);
+  let triangleCount = 0;
+  let binary = false;
+  if (buffer.byteLength >= 84) {
+    const guess = view.getUint32(80, true);
+    if (guess > 0 && 84 + guess * 50 === buffer.byteLength) { triangleCount = guess; binary = true; }
+  }
+  const positions = [];
+  const normals = [];
+  if (binary) {
+    for (let i = 0; i < triangleCount; i++) {
+      const base = 84 + i * 50;
+      const nx = view.getFloat32(base, true), ny = view.getFloat32(base + 4, true), nz = view.getFloat32(base + 8, true);
+      for (let vertex = 0; vertex < 3; vertex++) {
+        const at = base + 12 + vertex * 12;
+        positions.push(view.getFloat32(at, true), view.getFloat32(at + 4, true), view.getFloat32(at + 8, true));
+        normals.push(nx, ny, nz);
+      }
+    }
+  } else {
+    const text = new TextDecoder().decode(new Uint8Array(buffer));
+    const vertexPattern = /vertex\s+(-?[\d.eE+]+)\s+(-?[\d.eE+]+)\s+(-?[\d.eE+]+)/g;
+    const normalPattern = /facet\s+normal\s+(-?[\d.eE+]+)\s+(-?[\d.eE+]+)\s+(-?[\d.eE+]+)/g;
+    const vertices = [...text.matchAll(vertexPattern)].map((match) => [Number(match[1]), Number(match[2]), Number(match[3])]);
+    const facetNormals = [...text.matchAll(normalPattern)].map((match) => [Number(match[1]), Number(match[2]), Number(match[3])]);
+    for (let i = 0; i + 2 < vertices.length; i += 3) {
+      const normal = facetNormals[Math.floor(i / 3)] ?? [0, 0, 0];
+      for (let vertex = 0; vertex < 3; vertex++) {
+        positions.push(...vertices[i + vertex]);
+        normals.push(...normal);
+      }
+    }
+  }
+  if (positions.length === 0) throw new Error("这个 STL 里没有三角面数据");
+  const positionArray = new Float32Array(positions);
+  const normalArray = new Float32Array(normals);
+  const json = {
+    buffers: [{ uri: "data:application/octet-stream;base64," + toBase64(new Float32Array([...positionArray, ...normalArray]).buffer) }],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: positionArray.byteLength },
+      { buffer: 0, byteOffset: positionArray.byteLength, byteLength: normalArray.byteLength }
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: positionArray.length / 3, type: "VEC3" },
+      { bufferView: 1, componentType: 5126, count: normalArray.length / 3, type: "VEC3" }
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 } }] }],
+    nodes: [{ mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+    scene: 0
+  };
+  return buildScene(json, [decodeBase64(json.buffers[0].uri.slice(json.buffers[0].uri.indexOf(",") + 1))], baseName);
+};
+const toBase64 = (buffer) => {
+  const bytes = new Uint8Array(buffer);
+  let text = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(text);
+};
+//#endregion
+//#region scene state + drawing
+let wireBuilt = false;
+let wireSkipped = false;
+const clearWire = () => {
+  if (state.model !== null) {
+    for (const primitive of state.model.primitives) {
+      if (primitive.wire !== void 0) {
+        gl.deleteBuffer(primitive.wire.buffer);
+        primitive.wire = void 0;
+      }
+    }
+  }
+  wireBuilt = false;
+  wireSkipped = false;
+};
+/** Build the edge index buffers once: unique edges only, so the wireframe stays readable. */
+const buildWire = () => {
+  if (wireBuilt || state.model === null) return;
+  wireBuilt = true;
+  if (state.model.triangles > WIRE_TRIANGLE_LIMIT) {
+    wireSkipped = true;
+    return;
+  }
+  for (const primitive of state.model.primitives) {
+    const source = primitive.sourceIndices;
+    if (source === void 0) continue;
+    const edges = [];
+    const seen = new Set();
+    for (let i = 0; i + 2 < source.length; i += 3) {
+      const triangle = [source[i], source[i + 1], source[i + 2]];
+      for (let e = 0; e < 3; e++) {
+        const a = triangle[e], b = triangle[(e + 1) % 3];
+        const key = a < b ? a + ":" + b : b + ":" + a;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        edges.push(a, b);
+      }
+    }
+    if (edges.length === 0) continue;
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, buffer);
+    const wide = edges.length > 65535;
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, wide || !uintIndices ? new Uint32Array(edges) : new Uint16Array(edges), gl.STATIC_DRAW);
+    primitive.wire = { buffer, count: edges.length, indexType: wide || !uintIndices ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT };
+  }
+};
+const resize = () => {
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+  const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+  if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+};
+const camera = () => {
+  const cosPitch = Math.cos(state.pitch);
+  const eye = [
+    state.target[0] + state.distance * cosPitch * Math.sin(state.yaw),
+    state.target[1] + state.distance * Math.sin(state.pitch),
+    state.target[2] + state.distance * cosPitch * Math.cos(state.yaw)
+  ];
+  return { eye, target: state.target };
+};
+const gridBuffer = { buffer: null, count: 0 };
+const buildGrid = () => {
+  const radius = Math.max(state.radius * 2.5, 1);
+  const step = Math.pow(10, Math.round(Math.log10(radius)) - 1);
+  const half = Math.ceil(radius / step) * step;
+  const vertices = [];
+  for (let value = -half; value <= half + 1e-9; value += step) {
+    vertices.push(-half, 0, value, half, 0, value, value, 0, -half, value, 0, half);
+  }
+  if (gridBuffer.buffer === null) gridBuffer.buffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, gridBuffer.buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+  gridBuffer.count = vertices.length / 3;
+};
+const bindAttribute = (location, buffer, size) => {
+  if (location < 0 || buffer === null) return;
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.enableVertexAttribArray(location);
+  gl.vertexAttribPointer(location, size, gl.FLOAT, false, 0, 0);
+};
+/** Draw a bare-positions line list (grid, wireframe): only `aPos` is bound. */
+const drawLines = (buffer, count, color, mode, indexBuffer) => {
+  gl.useProgram(lines);
+  gl.uniform4fv(lineU.color, color);
+  gl.disableVertexAttribArray(lineA.normal);
+  gl.disableVertexAttribArray(lineA.uv);
+  bindAttribute(lineA.pos, buffer, 3);
+  if (indexBuffer === null || indexBuffer === void 0) {
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+    gl.drawArrays(gl.LINES, 0, count);
+    return;
+  }
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+  gl.drawElements(gl.LINES, count, mode, 0);
+};
+const draw = () => {
+  if (gl === null) return;
+  resize();
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  const dark = state.background === "dark";
+  gl.clearColor(dark ? 0.043 : 0.93, dark ? 0.067 : 0.945, dark ? 0.125 : 0.98, 1);
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthFunc(gl.LEQUAL);
+  gl.enable(gl.CULL_FACE);
+  gl.cullFace(gl.BACK);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  const { eye, target } = camera();
+  const aspect = canvas.width / Math.max(1, canvas.height);
+  const proj = perspective(Math.PI / 4, aspect, Math.max(state.radius / 1000, 0.001), state.radius * 40 + state.distance * 4);
+  const viewMatrix = lookAt(eye, target, [0, 1, 0]);
+  if (state.grid && gridBuffer.count > 0) {
+    gl.disable(gl.CULL_FACE);
+    drawLines(gridBuffer.buffer, gridBuffer.count, dark ? [0.32, 0.38, 0.52, 0.5] : [0.62, 0.66, 0.76, 0.55], null, null);
+  }
+  if (state.model === null) return;
+  gl.enable(gl.CULL_FACE);
+  for (const primitive of state.model.primitives) {
+    const material = primitive.material;
+    if (state.wireframe) {
+      if (primitive.wire === void 0) continue;
+      gl.disable(gl.CULL_FACE);
+      gl.useProgram(lines);
+      gl.uniformMatrix4fv(lineU.proj, false, proj);
+      gl.uniformMatrix4fv(lineU.view, false, viewMatrix);
+      gl.uniformMatrix4fv(lineU.model, false, m4());
+      drawLines(primitive.vao.pos, primitive.wire.count, dark ? [0.62, 0.72, 0.98, 0.9] : [0.24, 0.3, 0.66, 0.9], primitive.wire.indexType, primitive.wire.buffer);
+      continue;
+    }
+    gl.useProgram(solid);
+    gl.uniformMatrix4fv(solidU.proj, false, proj);
+    gl.uniformMatrix4fv(solidU.view, false, viewMatrix);
+    gl.uniformMatrix4fv(solidU.model, false, m4());
+    gl.uniformMatrix3fv(solidU.normal, false, normalMatrix(m4()));
+    const color = material === null ? [0.72, 0.74, 0.8, 1] : material.color;
+    gl.uniform4fv(solidU.color, color);
+    gl.uniform1f(solidU.unlit, 0);
+    if (material !== null && material.texture !== null) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, material.texture);
+      gl.uniform1i(solidU.map, 0);
+      gl.uniform1f(solidU.hasMap, 1);
+    } else {
+      gl.uniform1f(solidU.hasMap, 0);
+    }
+    if (material !== null && (material.doubleSided || material.alphaBlend)) gl.disable(gl.CULL_FACE);
+    else gl.enable(gl.CULL_FACE);
+    if (material !== null && (material.alphaBlend || material.color[3] < 1)) {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    } else {
+      gl.disable(gl.BLEND);
+    }
+    bindAttribute(solidA.pos, primitive.vao.pos, 3);
+    bindAttribute(solidA.normal, primitive.vao.normal, 3);
+    bindAttribute(solidA.uv, primitive.vao.uv, 2);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, primitive.vao.index);
+    gl.drawElements(gl.TRIANGLES, primitive.count, primitive.indexType, 0);
+  }
+  gl.disable(gl.BLEND);
+};
+const fit = () => {
+  if (state.model === null) return;
+  state.target = [...state.model.center];
+  state.radius = state.model.radius;
+  state.distance = state.model.radius * 2.9;
+  state.yaw = 0.6;
+  state.pitch = 0.42;
+  buildGrid();
+  draw();
+  postCamera();
+};
+let cameraFrame = false;
+const postCamera = () => {
+  if (cameraFrame) return;
+  cameraFrame = true;
+  requestAnimationFrame(() => {
+    cameraFrame = false;
+    post({ type: "camera", yaw: Number(state.yaw.toFixed(4)), pitch: Number(state.pitch.toFixed(4)), distance: Number(state.distance.toFixed(4)) });
+  });
+};
+const report = (ok, message) => {
+  const model = state.model;
+  post({
+    type: "status",
+    ok,
+    message: message ?? "",
+    name: model === null ? "" : model.name,
+    meshes: model === null ? 0 : model.meshes,
+    triangles: model === null ? 0 : model.triangles,
+    materials: model === null ? 0 : model.materials,
+    textures: model === null ? 0 : model.textured,
+    size: model === null ? [0, 0, 0] : model.size.map((value) => Number(value.toFixed(4))),
+    wireframe: state.wireframe,
+    grid: state.grid,
+    background: state.background
+  });
+};
+const showInfo = () => {
+  const model = state.model;
+  if (model === null) { infoEl.textContent = "把 .glb/.gltf/.obj/.stl 文件拖进来，或点「打开文件…」"; return; }
+  const size = model.size.map((value) => value.toFixed(2)).join(" × ");
+  infoEl.textContent = model.triangles + " 三角形 · " + model.meshes + " 网格 · " + model.materials + " 材质" + (model.textured > 0 ? "（" + model.textured + " 带贴图）" : "") + " · 尺寸 " + size;
+  infoEl.title = infoEl.textContent;
+};
+//#endregion
+//#region loading
+const loadBuffer = (buffer, name) => {
+  try {
+    const lower = String(name ?? "").toLowerCase();
+    setOverlay("正在解析 " + (name || "模型") + "…", "busy");
+    const scene = lower.endsWith(".obj")
+      ? parseObj(new TextDecoder().decode(new Uint8Array(buffer)), name)
+      : lower.endsWith(".stl")
+        ? parseStl(buffer, name)
+        : parseGltf(buffer, name);
+    if (scene.primitives.length === 0) throw new Error("这个文件里没有可显示的三角网格");
+    state.model = scene;
+    clearWire();
+    nameEl.textContent = scene.name.length > 0 ? scene.name : "模型";
+    nameEl.title = nameEl.textContent;
+    buildWire();
+    fit();
+    setOverlay("");
+    showInfo();
+    report(true, wireSkipped ? "模型较大，线框已跳过" : "");
+    return true;
+  } catch (error) {
+    state.model = null;
+    clearWire();
+    const message = error !== null && error.message ? error.message : String(error);
+    setOverlay("无法显示这个模型：" + message, "error");
+    showInfo();
+    report(false, message);
+    draw();
+    return false;
+  }
+};
+const loadFromFile = (file) => {
+  if (file === void 0 || file === null) return;
+  const reader = new FileReader();
+  setOverlay("正在读取 " + file.name + "…", "busy");
+  reader.onerror = () => setOverlay("读取文件失败", "error");
+  reader.onload = () => {
+    const buffer = reader.result;
+    if (!(buffer instanceof ArrayBuffer)) { setOverlay("读取文件失败", "error"); return; }
+    loadBuffer(buffer, file.name);
+  };
+  reader.readAsArrayBuffer(file);
+};
+//#endregion
+//#region interaction
+let drag = null;
+canvas.addEventListener("pointerdown", (event) => {
+  // Capture keeps the orbit alive outside the canvas, but it is not required: a synthetic
+  // pointer (an automation click, a test) has no active pointer id and must still work.
+  try { canvas.setPointerCapture(event.pointerId); } catch { /* no active pointer */ }
+  drag = { x: event.clientX, y: event.clientY, yaw: state.yaw, pitch: state.pitch, pan: event.button === 1 || event.shiftKey, target: [...state.target] };
+  event.preventDefault();
+});
+canvas.addEventListener("pointermove", (event) => {
+  if (drag === null) return;
+  const dx = event.clientX - drag.x;
+  const dy = event.clientY - drag.y;
+  if (drag.pan) {
+    const scale = state.distance * 0.0016;
+    const right = [Math.cos(state.yaw), 0, -Math.sin(state.yaw)];
+    const up = [0, 1, 0];
+    state.target = [
+      drag.target[0] - right[0] * dx * scale + up[0] * dy * scale,
+      drag.target[1] - right[1] * dx * scale + up[1] * dy * scale,
+      drag.target[2] - right[2] * dx * scale + up[2] * dy * scale
+    ];
+  } else {
+    state.yaw = drag.yaw - dx * 0.008;
+    state.pitch = Math.max(-1.5, Math.min(1.5, drag.pitch + dy * 0.008));
+  }
+  draw();
+  postCamera();
+});
+const endDrag = (event) => {
+  if (drag === null) return;
+  drag = null;
+  try { canvas.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+};
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+canvas.addEventListener("wheel", (event) => {
+  event.preventDefault();
+  state.distance = Math.max(state.radius * 0.05, Math.min(state.radius * 60, state.distance * (event.deltaY > 0 ? 1.12 : 0.89)));
+  draw();
+  postCamera();
+}, { passive: false });
+document.getElementById("open").addEventListener("click", () => fileInput.click());
+document.getElementById("fit").addEventListener("click", () => fit());
+document.getElementById("wire").addEventListener("click", (event) => {
+  state.wireframe = !state.wireframe;
+  event.currentTarget.setAttribute("data-on", state.wireframe ? "1" : "0");
+  draw();
+  report(true, "");
+});
+document.getElementById("grid").addEventListener("click", (event) => {
+  state.grid = !state.grid;
+  event.currentTarget.setAttribute("data-on", state.grid ? "1" : "0");
+  draw();
+  report(true, "");
+});
+document.getElementById("bg").addEventListener("click", () => {
+  state.background = state.background === "dark" ? "light" : "dark";
+  document.body.setAttribute("data-bg", state.background);
+  draw();
+  report(true, "");
+});
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files === null || fileInput.files === void 0 ? null : fileInput.files[0];
+  fileInput.value = "";
+  if (file === null) return;
+  loadFromFile(file);
+  post({ type: "picked", name: file.name, size: file.size });
+  return;
+});
+for (const type of ["dragenter", "dragover"]) {
+  window.addEventListener(type, (event) => { event.preventDefault(); dropHint.setAttribute("data-over", "1"); });
+}
+for (const type of ["dragleave", "dragend"]) {
+  window.addEventListener(type, () => dropHint.removeAttribute("data-over"));
+}
+window.addEventListener("drop", (event) => {
+  event.preventDefault();
+  dropHint.removeAttribute("data-over");
+  const file = event.dataTransfer !== void 0 && event.dataTransfer !== null && event.dataTransfer.files !== void 0 ? event.dataTransfer.files[0] : null;
+  if (file === void 0 || file === null) return;
+  // Hand the bytes to the host as well: it decides whether the model is worth persisting.
+  const reader = new FileReader();
+  reader.onload = () => {
+    const buffer = reader.result;
+    if (buffer instanceof ArrayBuffer) post({ type: "dropped", name: file.name, size: file.size, buffer }, [buffer]);
+  };
+  reader.readAsArrayBuffer(file);
+  loadFromFile(file);
+});
+window.addEventListener("message", (event) => {
+  const message = event.data;
+  if (message === null || typeof message !== "object") return;
+  if (message.type === "load" && message.buffer instanceof ArrayBuffer) loadBuffer(message.buffer, message.name ?? "");
+  else if (message.type === "loadUrl" && typeof message.url === "string") {
+    // A URL is fetched by this document: a host that is not CORS-enabled cannot be read, and
+    // the message says so instead of leaving an empty stage.
+    setOverlay("正在下载 " + (message.name || message.url) + "…", "busy");
+    fetch(message.url).then((answer) => {
+      if (answer.ok !== true) throw new Error("HTTP " + answer.status);
+      return answer.arrayBuffer();
+    }).then((buffer) => {
+      loadBuffer(buffer, message.name !== void 0 && message.name.length > 0 ? message.name : message.url.split("/").pop());
+    }).catch((error) => {
+      const detail = error !== null && error.message ? error.message : String(error);
+      setOverlay("无法下载这个模型（" + detail + "）：如果是跨域地址，请把文件拖进画布，或用 data: 内嵌", "error");
+      report(false, "无法下载模型（" + detail + "）");
+    });
+  } else if (message.type === "fit") fit();
+  else if (message.type === "options") {
+    if (typeof message.wireframe === "boolean") { state.wireframe = message.wireframe; document.getElementById("wire").setAttribute("data-on", state.wireframe ? "1" : "0"); }
+    if (typeof message.grid === "boolean") { state.grid = message.grid; document.getElementById("grid").setAttribute("data-on", state.grid ? "1" : "0"); }
+    if (message.background === "dark" || message.background === "light") { state.background = message.background; document.body.setAttribute("data-bg", state.background); }
+    draw();
+    report(true, "");
+  } else if (message.type === "clear") {
+    state.model = null;
+    clearWire();
+    setOverlay("等待模型…");
+    showInfo();
+    report(true, "");
+    draw();
+  } else if (message.type === "status") report(state.model !== null || overlay.getAttribute("data-error") === null, state.message);
+});
+window.addEventListener("resize", () => draw());
+draw();
+showInfo();
+/** Host-facing snapshot (also what the verification harness reads back). */
+window.__viewerInfo = () => ({
+  boot: window.__viewerBoot,
+  name: state.model === null ? "" : state.model.name,
+  triangles: state.model === null ? 0 : state.model.triangles,
+  meshes: state.model === null ? 0 : state.model.meshes,
+  yaw: Number(state.yaw.toFixed(4)),
+  pitch: Number(state.pitch.toFixed(4)),
+  distance: Number(state.distance.toFixed(4)),
+  wireframe: state.wireframe,
+  grid: state.grid,
+  background: state.background,
+  dragging: drag !== null
+});
+window.__viewerBoot = "ready";
+post({ type: "ready" });
+</script>
+</body>
+</html>

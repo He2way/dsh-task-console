@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { startBridge } from "../bridge/server.mjs";
+import { buildCubeGlb } from "./cube-glb.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
@@ -83,6 +84,9 @@ const demoPluginJs = `(function () {
     }
   };
 })();`;
+
+// The model the 3D-viewer stage puts on the canvas: a real, valid glTF-binary cube.
+const cubeBase64 = buildCubeGlb().toString("base64");
 
 const server = createServer((request, response) => {
   const path = String(request.url === void 0 ? "/" : request.url).split("?")[0];
@@ -708,7 +712,34 @@ try {
                     log("UNLINK links=" + Object.keys(tc.canvasSnapshot().canvases[linkCanvasId].links).length +
                       " frames=" + document.querySelectorAll(".dsh-tc-linkFrame").length +
                       " edges=" + document.querySelectorAll(".dsh-tc-linkEdge").length);
-                    return true;
+                    // ---- the 3D viewer control: a real glb on the canvas is really displayed ----
+                    const modelCanvasId = tc.canvasSnapshot().activeId;
+                    const modelItem = tc.canvasAddControl(modelCanvasId, "model", 1400, 40, {
+                      kind: "model",
+                      src: "data:application/octet-stream;base64," + ${JSON.stringify(cubeBase64)},
+                      name: "cube.glb",
+                      height: 360,
+                      wireframe: false,
+                      grid: true,
+                      background: "dark"
+                    });
+                    ReactDOM.flushSync(() => {});
+                    const modelNodeOf = () => document.querySelector('[data-id="' + modelItem + '"]');
+                    return waitFor(() => {
+                      const node = modelNodeOf();
+                      const info = node === null ? null : node.querySelector(".dsh-tc-modelInfo");
+                      return info !== null && /三角形/.test(info.textContent);
+                    }, 20000).then((loadedModel) => {
+                      const node = modelNodeOf();
+                      const info = node === null ? null : node.querySelector(".dsh-tc-modelInfo");
+                      const frame = node === null ? null : node.querySelector(".dsh-tc-modelFrame");
+                      log("MODEL loaded=" + loadedModel +
+                        " info=" + JSON.stringify(info === null ? "none" : info.textContent) +
+                        " frame=" + (frame !== null) +
+                        " sandbox=" + JSON.stringify(frame === null ? "none" : frame.getAttribute("sandbox")) +
+                        " state=" + JSON.stringify(node === null ? "none" : node.querySelector(".dsh-tc-model").getAttribute("data-state")));
+                      return true;
+                    });
                     });
                   });
               });
@@ -953,7 +984,7 @@ const instanceOk = instance !== null &&
   // and a [canvas] op list edits the plane (rename + note too)
   /CHAT input=true send=true placeholder=一句话改画布… dockW=34[02] centerOffset=0 gapBottom=16 floating=true bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText) &&
   // any control can be added straight onto the plane, then dragged by its own toolbar
-  /ADD menu=true chips=18 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText) &&
+  /ADD menu=true chips=19 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText) &&
   // the bare control followed the pointer by exactly the dispatched delta
   bareMove !== null &&
   Number(bareMove[3]) === Number(bareMove[1]) + 120 &&
@@ -981,6 +1012,8 @@ const instanceOk = instance !== null &&
   // a dashed frame around it, and the chip on the edge removes it again
   /LINK overlay=true hint="连线中：点另一张卡片完成连线（Esc 或右键取消）" items=7 links=1 frames=1 frameCount="2" edges=1 chips=1 label="⚯ 工作区上下文共享 · 2 项" dashed="dashed" prompt=true/.test(boardText) &&
   /UNLINK links=0 frames=0 edges=0/.test(boardText) &&
+  // the 3D viewer control really parses the glb in its sandboxed frame and reports it
+  /MODEL loaded=true info="12 三角形 · 1 网格" frame=true sandbox="allow-scripts" state="ready"/.test(boardText) &&
   // the agent operated the real embedded page through the bridge
   /BRIDGE state=connected title="本地应用" ok=true count=4 clicks=2 badge=受控 · 已连接/.test(boardText);
 const fullOk = boardText.includes("BOARD cards=") &&
@@ -999,7 +1032,7 @@ if (process.env.DSH_EMBED_DEBUG === "1") {
   console.log("DEBUG instance=" + JSON.stringify(instance));
   console.log("DEBUG reorder=" + JSON.stringify(reorder) + " bareMove=" + JSON.stringify(bareMove));
   console.log("DEBUG full=" + JSON.stringify(full));
-  console.log("DEBUG add=" + /ADD menu=true chips=18 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText));
+  console.log("DEBUG add=" + /ADD menu=true chips=19 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText));
   console.log("DEBUG chat=" + /CHAT input=true send=true placeholder=用一句话修改这块画布 bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText));
   console.log("DEBUG derive=" + boardText.includes("DERIVE items=4 bare=1 apps=1"));
   console.log("DEBUG plugin=" + pluginOk + " pluginSpec=" + pluginSpecOk + " " + JSON.stringify(pluginSpecLine));
