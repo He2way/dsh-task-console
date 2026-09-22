@@ -729,7 +729,7 @@ try {
                       const node = modelNodeOf();
                       const info = node === null ? null : node.querySelector(".dsh-tc-modelInfo");
                       return info !== null && /三角形/.test(info.textContent);
-                    }, 20000).then((loadedModel) => {
+                    }, 30000).then((loadedModel) => {
                       const node = modelNodeOf();
                       const info = node === null ? null : node.querySelector(".dsh-tc-modelInfo");
                       const frame = node === null ? null : node.querySelector(".dsh-tc-modelFrame");
@@ -1033,7 +1033,16 @@ if (process.env.DSH_EMBED_DEBUG === "1") {
   console.log("DEBUG reorder=" + JSON.stringify(reorder) + " bareMove=" + JSON.stringify(bareMove));
   console.log("DEBUG full=" + JSON.stringify(full));
   console.log("DEBUG add=" + /ADD menu=true chips=19 bare=1 kind=counter noCardChrome=true hasCounter=true/.test(boardText));
-  console.log("DEBUG chat=" + /CHAT input=true send=true placeholder=用一句话修改这块画布 bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/.test(boardText));
+  for (const [label, pattern] of [
+    ["chat", /CHAT input=true send=true placeholder=一句话改画布… dockW=\d+ centerOffset=0 gapBottom=16 floating=true bareBefore=1 bareAfter=2 changed=2 storeName=对话改名的副本 storeCards=\d+ domName=对话改名的副本 note=\["已加上倒计时"\]/],
+    ["image", /IMAGE settled=true imgs=1 loaded=1 failed=1 picker=true/],
+    ["imagelocal", /IMAGELOCAL replaced=true loaded=2 failed=0 stored=local,remote/],
+    ["link", /LINK overlay=true .* edges=1 chips=1 .* dashed="dashed" prompt=true/],
+    ["unlink", /UNLINK links=0 frames=0 edges=0/],
+    ["model", /MODEL loaded=true info="12 三角形 · 1 网格" frame=true sandbox="allow-scripts" state="ready"/],
+    ["recorded", /RECORDED built=true cards=2\(was 1\) bare=1 kinds=trend unsupported=0 trendMarks=1/],
+    ["conversation", /CONVERSATION applied=true canvas=active items=1 plugin=true state=mounted/]
+  ]) console.log("DEBUG " + label + "=" + pattern.test(boardText));
   console.log("DEBUG derive=" + boardText.includes("DERIVE items=4 bare=1 apps=1"));
   console.log("DEBUG plugin=" + pluginOk + " pluginSpec=" + pluginSpecOk + " " + JSON.stringify(pluginSpecLine));
   console.log("DEBUG escape=" + boardText.includes("ESCAPE overlay=true instance=true"));

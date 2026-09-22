@@ -1959,5 +1959,176 @@ const boardCardHtml = renderToString(jsx(tc.TaskCard, {
 check("card header renders the fullscreen button", boardCardHtml.includes("⛶") && boardCardHtml.includes("全屏显示这张卡片"));
 check("canvas cards expose the fullscreen action", renderToString(jsx(tc.TaskCanvasView, { onClose: () => {} })).includes("全屏显示这张卡片"));
 
+// ---- the current session, on both generations of the sessions list ----
+// Newer clients dropped `current` from `SessionListState`: the current session is the one the
+// main view retains. Reading only `current` made the plugin believe no session was selected.
+const newStyleState = {
+  ids: ["s1"],
+  byId: {
+    s1: { id: "s1", displayTitle: "测试会话 · 重构文档", running: true, cwd: "D:\\projects\\demo", updatedAt: NOW, blank: false, retainedBy: { mainView: 1 } },
+    s2: { id: "s2", displayTitle: "别的会话", running: false, cwd: "D:\\projects\\other", updatedAt: NOW, blank: false, retainedBy: {} },
+  },
+  phase: "ready",
+  projectionsBySession: {
+    s1: {
+      values: {
+        subagentCatalog: [
+          { id: "agent-aaaa1111", createdAt: NOW, mode: "continuable", label: "研究助手" },
+          { id: "agent-bbbb2222", createdAt: NOW, mode: "one-shot", label: "代码审查" },
+        ],
+      },
+      state: "ready",
+      error: null,
+    },
+  },
+};
+check(
+  "the current session is resolved on both list generations",
+  tc.taskListCurrentId(STATE) === "s1" &&
+    tc.taskListCurrentId(newStyleState) === "s1" &&
+    tc.taskListCurrentId({ ids: [], byId: {}, phase: "ready", projectionsBySession: {} }) === null &&
+    tc.taskListCurrentId(null) === null
+);
+check(
+  "the session list is read through both generations of the service",
+  tc.taskSessionsListState({ list: { getSnapshot: () => newStyleState } }) === newStyleState &&
+    tc.taskSessionsListState({ list: { getSnapshot: () => STATE } }) === STATE &&
+    tc.taskSessionsListState({ list: () => STATE }) === STATE &&
+    tc.taskSessionsListState({ list: { getSnapshot: () => { throw new Error("gone"); } } }) === null &&
+    tc.taskSessionsListState(null) === null
+);
+const modernPanelHtml = renderToString(jsx(tc.TaskBackPanel, {
+  useSessions: (selector) => selector(newStyleState),
+  useSessionStatus: (selector) => selector(new Map([["agent-aaaa1111", { running: true }]])),
+  onClose: () => {}
+}));
+check(
+  "the panel shows the retained session and its projected subagents on a newer client",
+  modernPanelHtml.includes("测试会话 · 重构文档") &&
+    modernPanelHtml.includes("D:\\projects\\demo") &&
+    modernPanelHtml.includes("研究助手") &&
+    modernPanelHtml.includes("1 运行中")
+);
+check(
+  "subagent rows come from the legacy field or the projected catalog",
+  tc.taskSessionSubagents(STATE, "s1", undefined).entries.length === 2 &&
+    tc.taskSessionSubagents(newStyleState, "s1", new Map([["agent-aaaa1111", { running: true }]])).entries[0].activity === "running" &&
+    tc.taskSessionSubagents(newStyleState, "s1", new Map()).entries[0].activity === "idle" &&
+    tc.taskSessionSubagents(newStyleState, "s2", new Map()) === undefined &&
+    tc.taskSessionSubagents(null, "s1", new Map()) === undefined
+);
+
+// ---- the temporary agent session behind the card/canvas chat ----
+// A helper session this plugin creates is retained by nobody, and the newer client sessions
+// service only hands out a binding for a session somebody retains ("borrow an already-retained
+// binding"): `binding(id)` stays undefined, the helper never gets prompted, and the canvas chat
+// dies with 临时 agent 会话不可用 while blank sessions pile up. These two fakes pin both
+// generations of that contract down.
+function makeFakeSessions(options) {
+  const legacy = options !== void 0 && options.legacy === true;
+  const state = {
+    created: [],
+    promptText: "",
+    retainedSource: null,
+    retained: false,
+    released: 0,
+    opened: 0,
+    archived: []
+  };
+  const entries = [];
+  const eventSource = { getSnapshot: () => ({ entries: entries.map((event) => ({ event })) }), subscribe: () => () => {} };
+  const session = {
+    getSnapshot: () => ({ running: false, queue: [] }),
+    open: () => { state.opened += 1; return Promise.resolve(); },
+    updateQueue: () => Promise.resolve(),
+    cancel: () => Promise.resolve(),
+    prompt: (content) => {
+      state.promptText = content.map((part) => part.text ?? "").join("\n");
+      entries.push({ type: "user/message", seq: 1, data: { content: [{ type: "text", text: state.promptText }] } });
+      entries.push({
+        type: "assistant/message",
+        seq: 2,
+        data: { message: { content: [{ type: "text", text: '[canvas] { "ops": [ { "op": "add", "kind": "countdown", "label": "截止", "until": ' + (Date.now() + 3600000) + ' } ] } [/canvas]' }] } }
+      });
+      return Promise.resolve({ ok: true });
+    }
+  };
+  const binding = { sessionId: "temp-1", session, eventSource };
+  const sessions = {
+    // A newer client: no `current`, the main view retains its session, workspaces use workspaceId.
+    list: legacy
+      ? { getSnapshot: () => ({ current: "main-1", byId: { "main-1": { cwd: "D:/demo" } } }) }
+      : { getSnapshot: () => ({ ids: ["main-1"], byId: { "main-1": { id: "main-1", cwd: "D:/demo", retainedBy: { mainView: 1 } } }, phase: "ready", projectionsBySession: {} }) },
+    create: (createOptions) => { state.created.push(createOptions); return Promise.resolve("temp-1"); },
+    fork: () => Promise.resolve("temp-2"),
+    // The newer service borrows only what is retained; the older one always resolves.
+    binding: () => (legacy || state.retained ? binding : void 0)
+  };
+  if (!legacy) {
+    sessions.retain = (id, retainOptions) => {
+      state.retainedSource = retainOptions.source;
+      state.retained = true;
+      return {
+        get binding() { return state.retained ? binding : void 0; },
+        ready: Promise.resolve(binding),
+        release: () => { state.released += 1; state.retained = false; }
+      };
+    };
+  }
+  return {
+    sessions,
+    state,
+    workspaces: {
+      // The workspace owning the cwd, so `create` is asked for a workspace target.
+      list: { getSnapshot: () => ({ items: [{ workspaceId: "ws-1", path: "D:/demo", title: "demo" }] }) },
+      archiveSession: (id) => { state.archived.push(id); return Promise.resolve(); }
+    }
+  };
+}
+const fakeAgentCtx = (fake) => ({
+  get: (name) => (name === "sessions" ? fake.sessions : name === "workspaces" ? fake.workspaces : null)
+});
+const runCanvasRefactor = async (fake, canvasId) => {
+  const runTask = tc.createTaskCardAgentBridge(fakeAgentCtx(fake));
+  return await runTask(tc.TASK_CANVAS_AGENT_TASK, {
+    canvasId,
+    id: canvasId,
+    canvas: tc.canvasSnapshot().canvases[canvasId],
+    instruction: "加一个倒计时"
+  }, () => {});
+};
+const agentCanvas = tc.canvasCreate("临时会话画布");
+const modern = makeFakeSessions();
+const modernOutcome = await runCanvasRefactor(modern, agentCanvas.id);
+check(
+  "the temp agent session is retained for the newer sessions service, prompted and applied",
+  modernOutcome.ok === true &&
+    modern.state.created.length === 1 &&
+    modern.state.retainedSource === "dsh-task-console" &&
+    modern.state.opened === 1 &&
+    modern.state.promptText.includes("【任务台画布编辑】") &&
+    modern.state.promptText.includes("加一个倒计时") &&
+    // the retention is handed back when the task ends, and the helper is archived
+    modern.state.released === 1 &&
+    modern.state.retained === false &&
+    modern.state.archived.join(",") === "temp-1" &&
+    Object.values(tc.canvasSnapshot().canvases[agentCanvas.id].cards).some((item) => (item.blocks ?? [])[0]?.kind === "countdown") &&
+    // the helper session is created in the source session's workspace, found through the
+    // current session's cwd on a list that no longer carries `current`
+    modern.state.created[0].workspaceId === "ws-1"
+);
+const legacyCanvas = tc.canvasCreate("临时会话画布 2");
+const legacyFake = makeFakeSessions({ legacy: true });
+const legacyOutcome = await runCanvasRefactor(legacyFake, legacyCanvas.id);
+check(
+  "the older sessions service still works (binding without retain)",
+  legacyOutcome.ok === true &&
+    legacyFake.state.promptText.includes("【任务台画布编辑】") &&
+    legacyFake.state.retainedSource === null &&
+    legacyFake.state.archived.join(",") === "temp-1" &&
+    legacyFake.state.created[0].workspaceId === "ws-1" &&
+    Object.values(tc.canvasSnapshot().canvases[legacyCanvas.id].cards).some((item) => (item.blocks ?? [])[0]?.kind === "countdown")
+);
+
 console.log(failed === 0 ? "ALL PASS" : `${failed} FAILURES`);
 process.exit(failed === 0 ? 0 : 1);

@@ -4,6 +4,16 @@ All notable changes to `dsh-task-console` are recorded here. Versions follow `pa
 
 本文件记录 `dsh-task-console` 的版本变更，版本号与 `package.json` 一致。
 
+## v0.26.1
+
+- **Fixed: the temporary agent session behind the card / canvas chat stopped working on newer DSH clients ("临时 agent 会话不可用") / 修复：卡片与画布的临时 agent 会话在新版 DSH 上不可用** — the client sessions service changed *silently*: `sessions.binding(id)` no longer returns the binding of any listed session, it only **borrows an already-retained binding** ("Borrow an already-retained binding without extending its lifetime"), and the way to hold one is `sessions.retain(id, { source })` (or `sessions.using`). A helper session this plugin creates with `sessions.create` is retained by nobody, so `binding()` reported nothing for it: the helper was created, never prompted, the chat failed with 临时 agent 会话不可用, and the session list slowly filled with blank sessions. The plugin now **retains the helper for the length of the task** and releases it on every exit path (the older `binding()` path stays as the fallback for older clients).
+- **Also aligned with the same client generation / 同时对齐同一代客户端**:
+  - the session list no longer carries `current` (`SessionListState` is `{ ids, byId, phase, projectionsBySession }`). The current session is now resolved the way the harness's own panels resolve it — **the session the main view retains** (`retainedBy.mainView`) — with `current` still honoured when present. Previously the plugin saw no current session at all: the helper was created in the deployment's default workspace instead of the conversation's, the card chat's "send to the main session" could not find a session, and the board's session card read "未选择会话".
+  - a workspace row is named `workspaceId` now (it used to be `id`), so a helper session is once again created **inside the registered workspace** that owns the conversation's cwd instead of falling back to a raw path.
+  - the per-session `subagentsByParent` list field is gone; the board's 子代理 card reads the `subagentCatalog` projection instead, with running state from `useSessionStatus` (a client that provides neither simply shows no rows).
+  - `jobsBySession` has no replacement in this client generation: the 后台任务 card renders its empty state rather than throwing.
+- **Tests / 测试** — `smoke.mjs` now pins both generations of the sessions service down with fakes: a newer one where `binding()` stays undefined until `retain()` is called (this is the regression: it fails on the old code) and an older one where `binding()` always resolves. It asserts the helper is created in the source session's workspace (`workspaceId`), really prompted, applied to the canvas, archived, and that the retention is released exactly once; plus the current-session resolution, list reading, workspace naming and subagent projection on both shapes.
+
 ## v0.26.0
 
 - **A 3D viewer on the canvas: open a .glb/.gltf/.obj/.stl without Blender / 画布内嵌 3D 查看器** — a new `model` control renders models right on the canvas (or inside a card, or fullscreen with `⛶`). Nothing to install and nothing fetched at runtime: the viewer is a **dependency-free WebGL page** (`viewer/viewer.html`, ~44 KB) that `npm run embed:viewer` gzips into the client bundle, exactly like the architecture diagram.
