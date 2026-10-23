@@ -37,6 +37,10 @@ Requires a DSH profile (default: `web`). The package declares `dsh.bundle`, so `
 
 需要 DSH profile（默认 `web`）。本包声明了 `dsh.bundle`，`dsh plugin` 会自动把它加入 profile 的 bundle 列表，无需手动改 patch。
 
+**DSH version / DSH 版本**：declared as `engines.dsh = ">=0.1.5-rc.1 <0.3.0-0"`, i.e. it loads on the 0.1.x and 0.2.x generations. This range is not cosmetic: **DSH silently skips a profile bundle whose range does not include the running version** (`dsh: skipping profile bundle "dsh-task-console": … is incompatible with dsh …`) — the workbench simply disappears, with no error from the plugin itself. If you run a newer DSH than the range covers, run `npm run check:compat` (it uses DSH's own compatibility evaluator against every local DSH checkout) and widen `engines.dsh`; the smoke test fails while the newest local DSH would skip the plugin, and also fails when the range is narrowed below `0.3.0`.
+
+**DSH 版本**：声明为 `engines.dsh = ">=0.1.5-rc.1 <0.3.0-0"`，即 0.1.x 与 0.2.x 两代都能加载。这个范围不是装饰：**DSH 会静默跳过 `engines.dsh` 不包含当前版本的 profile bundle**（`dsh: skipping profile bundle "dsh-task-console": … is incompatible with dsh …`）—— 工作台会直接消失，而插件自身不会有任何报错。若你的 DSH 更新、超出该范围，运行 `npm run check:compat`（用 DSH 自己的兼容评估器检查本机所有 DSH 版本）并放宽 `engines.dsh`；测试会在「最新本机 DSH 会跳过本插件」时失败，也会在范围被收窄到 `0.3.0` 以下时失败。
+
 ### From the plugin market / 从插件市场安装
 
 Listed in the community DSH plugin markets ([awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) → [dsh-market](https://github.com/dsh-market/dsh-market), [dsh-plugin-market](https://github.com/NanmiCoder/dsh-plugin-market)) as **`He2way/dsh-task-console`**, category **ui**. Install the market, then either one-click install there or use the command below.
@@ -260,6 +264,7 @@ node tools/embed-diagram.mjs  # re-embed docs/architecture.html into lib/client.
 npm run verify:diagram        # headless-Chrome check of the embedded diagram frame
 npm run verify:embed          # headless-Chrome checks: sandboxed frames, real grip drag
                               # (board + 1.5x plane) and the fullscreen card overlay
+npm run check:compat          # DSH's own `engines.dsh` gate against every local DSH checkout
 ```
 
 ### Releasing / 发布

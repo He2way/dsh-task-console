@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { localDshRuntimes, evaluateAgainst } from "./tools/dsh-compat.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const BUNDLE = join(HERE, "lib", "client.js");
@@ -25,7 +26,9 @@ globalThis.document = {
   head: { appendChild: (el) => styleTags.push(el) },
   createElement: () => ({ dataset: {}, textContent: "" }),
   querySelector: () => null,
-  body: { hasAttribute: () => false, nodeType: 1 }, // nodeType satisfies createPortal's container check
+  querySelectorAll: () => [],
+  hidden: true, // keeps the card watcher idle: this test has no real chat DOM
+  body: { hasAttribute: () => false, nodeType: 1, classList: { contains: () => false } }, // nodeType satisfies createPortal's container check
 };
 globalThis.window = { innerWidth: 1600 };
 globalThis.localStorage = undefined; // exercise the "no storage" path
@@ -1958,6 +1961,69 @@ const boardCardHtml = renderToString(jsx(tc.TaskCard, {
 }));
 check("card header renders the fullscreen button", boardCardHtml.includes("⛶") && boardCardHtml.includes("全屏显示这张卡片"));
 check("canvas cards expose the fullscreen action", renderToString(jsx(tc.TaskCanvasView, { onClose: () => {} })).includes("全屏显示这张卡片"));
+
+// ---- DSH runtime compatibility ----
+// DSH silently skips a profile bundle whose `engines.dsh` excludes the running version
+// ("dsh: skipping profile bundle … is incompatible with dsh …"), so a DSH upgrade can make the
+// whole workbench vanish without an error from the plugin. The declared range must therefore
+// stay wide enough for the generations this code supports, and the newest local DSH must load it.
+const pluginManifest = JSON.parse(readFileSync(join(HERE, "package.json"), "utf8"));
+const engineRange = String(pluginManifest.engines?.dsh ?? "");
+check(
+  "the declared DSH range covers the 0.1 and 0.2 generations",
+  engineRange.includes(">=0.1.5-rc.1") &&
+    engineRange.includes("<0.3.0-0") &&
+    pluginManifest.scripts["check:compat"] === "node tools/check-dsh-compat.mjs" &&
+    existsSync(join(HERE, "tools", "check-dsh-compat.mjs")) &&
+    existsSync(join(HERE, "tools", "dsh-compat.mjs"))
+);
+const changelogVersion = /^## v([0-9]+\.[0-9]+\.[0-9]+)/m.exec(readFileSync(join(HERE, "CHANGELOG.md"), "utf8"));
+check("the changelog documents the current version", changelogVersion !== null && changelogVersion[1] === pluginManifest.version);
+const dshRuntimes = localDshRuntimes();
+const newestDsh = dshRuntimes[0];
+const dshVerdict = newestDsh === void 0 ? null : await evaluateAgainst(pluginManifest, newestDsh.version, newestDsh.boot);
+check(
+  "the newest local DSH would load this plugin" + (newestDsh === void 0 ? " (no local DSH found: skipped)" : " — dsh " + newestDsh.version),
+  newestDsh === void 0 || dshVerdict.ok !== false
+);
+
+// ---- the plugin entry against a DSH-shaped client context ----
+// `apply(ctx)` is what DSH calls for the client bundle. A renamed service, slot or registration
+// form would break the workbench with no test failure otherwise, so the entry is exercised here
+// with the context shape DSH 0.2.x actually provides.
+const slotRegistrations = [];
+const entryCtx = {
+  get: (name) => (name === "modules" || name === "sessions" || name === "workspaces" || name === "remote" ? null : void 0),
+  slots: {
+    inject: (key, callback) => {
+      slotRegistrations.push({ injected: key, disposer: callback() });
+      return () => {};
+    },
+    register: (spec, component) => {
+      slotRegistrations.push({ spec, component });
+      return () => {};
+    }
+  }
+};
+let entryError = null;
+try {
+  tc.apply(entryCtx);
+} catch (error) {
+  entryError = error;
+}
+const overlaySpec = slotRegistrations.find((entry) => entry.spec !== void 0 && entry.spec.name === "shell.overlay");
+check(
+  "the plugin entry registers into shell.overlay on a DSH-shaped context",
+  entryError === null &&
+    Array.isArray(tc.inject) &&
+    tc.inject.join(",") === "slots,modules,remote,remote.dynamicCordisRunner" &&
+    slotRegistrations.some((entry) => entry.injected === "shell.overlay") &&
+    overlaySpec !== void 0 &&
+    overlaySpec.spec.id === "task-console" &&
+    overlaySpec.spec.order === 100 &&
+    overlaySpec.spec.label === "任务控制台" &&
+    overlaySpec.component === tc.TaskConsoleRoot
+);
 
 // ---- the current session, on both generations of the sessions list ----
 // Newer clients dropped `current` from `SessionListState`: the current session is the one the
